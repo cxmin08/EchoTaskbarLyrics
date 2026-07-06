@@ -1,0 +1,14 @@
+{
+  "name": "Echo Taskbar Lyrics 插件源",
+  "path": "",
+  "homepage": "https://github.com/cxmin08/EchoTaskbarLyrics",
+  "plugins": [
+    {
+      "id": "echo-taskbar-lyrics",
+      "path": "echo-taskbar-lyrics",
+      "repo": "https://github.com/cxmin08/EchoTaskbarLyrics",
+      "homepage": "https://github.com/cxmin08/EchoTaskbarLyrics",
+      "tags": ["lyrics", "taskbar", "windows", "process"]
+    }
+  ]
+}

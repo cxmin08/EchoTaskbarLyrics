@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install dependencies (vcpkg)
+        shell: powershell
+        run: |
+          $vcpkgRoot = "${{ github.workspace }}\vcpkg"
+
+          if (!(Test-Path $vcpkgRoot)) {
+            git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            git -C $vcpkgRoot checkout 75672db6bd812b060482b0f00b5a16b18a0c0f07
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+
+          & "$vcpkgRoot\vcpkg.exe" install ixwebsocket nlohmann-json zlib mbedtls kissfft --triplet x64-windows --classic
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+          $installDir = "$vcpkgRoot\installed\x64-windows"
+          Write-Host "VCPKG_INSTALLED_DIR=$installDir"
+          echo "VCPKG_INSTALLED_DIR=$installDir" >> $env:GITHUB_ENV
+
+      - name: Configure CMake
+        shell: powershell
+        run: |
+          cmake -B build -S . `
+            "-DVCPKG_INSTALLED_DIR=$env:VCPKG_INSTALLED_DIR" `
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -- /v:minimal
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoeKoeTaskbarLyrics-x64
+          path: moeKoe-taskbar-lyrics.zip

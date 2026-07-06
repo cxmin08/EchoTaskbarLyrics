@@ -1,0 +1,59 @@
+# Build artifacts
+build/
+out/
+cmake-build-*/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.cachefile
+*.vcxproj.user
+*.pdb
+*.obj
+*.ilk
+*.exp
+*.lib
+*.exe
+*.dll
+*.pch
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# vcpkg
+vcpkg_installed/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
+
+# Logs
+*.log
+logs/
+
+
+# Dev notes (推测/分析文档，不纳入版本控制)
+审查和建议.md
+审查和建议2.md
+ROADMAP.md
+
+# 压缩包
+*.zip
+*.rar
+*.7z
+
+# Misc
+Thumbs.db
+.DS_Store
