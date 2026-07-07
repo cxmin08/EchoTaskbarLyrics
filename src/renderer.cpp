@@ -498,6 +498,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
                          state.currentLine != lastState_.currentLine ||
                          state.currentTranslated != lastState_.currentTranslated ||
                          state.isPlaying != lastState_.isPlaying ||
+                         state.isPersonalFM != lastState_.isPersonalFM ||
                          state.isHovering != lastState_.isHovering ||
                          state.isDragging != lastState_.isDragging ||
                          state.nextLine != lastState_.nextLine ||
@@ -634,7 +635,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
 
     // 鼠标悬停时绘制控制按钮
     if (state.isHovering) {
-        DrawHoverControls(state.isPlaying);
+        DrawHoverControls(state.isPlaying, state.isPersonalFM);
     }
 
     // 拖动时绘制可见边框

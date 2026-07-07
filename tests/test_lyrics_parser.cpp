@@ -400,6 +400,18 @@ TEST_CASE("GetCurrentRenderState - cover art and song name propagation", "[GetCu
     REQUIRE(state.songName == "Test Song");
 }
 
+TEST_CASE("GetCurrentRenderState - personal FM propagation", "[GetCurrentRenderState]") {
+    LyricsParser parser;
+    parser.UpdateLyrics(MakeData({0}, {"Song"}));
+
+    PlayerState ps;
+    ps.isPersonalFM = true;
+    parser.UpdatePlayerState(ps);
+
+    auto state = parser.GetCurrentRenderState();
+    REQUIRE(state.isPersonalFM == true);
+}
+
 TEST_CASE("HasLyrics and IsPlaying", "[LyricsParser]") {
     LyricsParser parser;
     REQUIRE(parser.HasLyrics() == false);

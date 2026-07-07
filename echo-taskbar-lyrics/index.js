@@ -229,6 +229,8 @@ const buildPayload = (snapshot) => {
   return {
     source: "EchoMusic",
     isPlaying: Boolean(playback.isPlaying),
+    // 私人 FM 状态来自 EchoMusic snapshot，原生端据此把“上一首”切换为“不喜欢”。
+    isPersonalFM: Boolean(playback.isPersonalFM),
     currentTime: getEstimatedPlaybackMs(playback) / 1000,
     duration: Number(playback.duration || track.duration || 0),
     songName: title,
@@ -263,7 +265,20 @@ const pollCommands = async (ctx) => {
     const commands = Array.isArray(body?.commands) ? body.commands : [];
     for (const command of commands) {
       if (typeof command === "string") {
-        await ctx.nowPlaying.command(command).catch(() => undefined);
+        if (command === "dislikeFm") {
+          // 私人 FM 不喜欢优先走播放器 API：会上报垃圾歌曲并切歌。
+          if (ctx.player && typeof ctx.player.dislikePersonalFm === "function") {
+            try {
+              await ctx.player.dislikePersonalFm();
+              continue;
+            } catch {
+              // API 不可用或失败时，回退为普通下一首，至少保证按钮可跳过。
+            }
+          }
+          await ctx.nowPlaying.command("nextTrack").catch(() => undefined);
+        } else {
+          await ctx.nowPlaying.command(command).catch(() => undefined);
+        }
       }
     }
   } catch {

@@ -408,6 +408,8 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
                 PlayerState st;
                 st.isPlaying   = true;
                 st.currentTime = j["data"]["currentTime"].get<double>();
+                // 兼容旧 WebSocket 模式下直接携带的私人 FM 状态。
+                st.isPersonalFM = j["data"].value("isPersonalFM", false);
                 // currentSong 可能是 string 或 object，安全提取
                 if (j["data"].contains("currentSong")) {
                     const auto& cs = j["data"]["currentSong"];
@@ -472,6 +474,8 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
         if (j.contains("data") && j["data"].is_object()) {
             const auto& d = j["data"];
             st.isPlaying   = d.value("isPlaying",   false);
+            // 私人 FM 状态用于渲染“不喜欢”按钮，并决定左侧按钮命令。
+            st.isPersonalFM = d.value("isPersonalFM", false);
             st.currentTime = d.value("currentTime", 0.0);
             st.songTitle   = d.value("songTitle",   "");
 

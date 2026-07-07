@@ -82,7 +82,8 @@ RenderState LyricsParser::GetCurrentRenderState() const {
     RenderState out;
     std::lock_guard<std::mutex> lock(mutex_);
 
-    out.isPlaying   = state_.isPlaying;
+    out.isPlaying    = state_.isPlaying;
+    out.isPersonalFM = state_.isPersonalFM;
 
     // ── 本地时钟推算：播放状态下用本地时间插值 currentTime ──
     // 目的：即使 playerState 消息频率低（如每秒一次），progress 也能每帧平滑推进

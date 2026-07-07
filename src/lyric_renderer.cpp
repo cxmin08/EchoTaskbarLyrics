@@ -156,11 +156,28 @@ void TaskbarRenderer::DrawTranslatedText(const std::wstring& text, const float* 
         translationBrush_->SetOpacity(1.0f); // 恢复默认
     }
 }
-void TaskbarRenderer::DrawHoverControls(bool isPlaying) {
+void TaskbarRenderer::DrawHoverControls(bool isPlaying, bool isPersonalFM) {
     if (!renderTarget_ || !normalBrush_) return;
 
     const FLOAT w = static_cast<FLOAT>(width_);
     const FLOAT h = static_cast<FLOAT>(height_);
+
+    // 私人 FM 下左侧按钮语义从“上一首”变为“不喜欢”，命中区域保持不变。
+    auto drawPrevOrDislike = [&](const D2D1_RECT_F& rect, ID2D1SolidColorBrush* iconBrush) {
+        if (!isPersonalFM) {
+            renderTarget_->DrawTextW(L"\u23EE", 1, btnFormat_.Get(), rect, iconBrush);
+            return;
+        }
+
+        // 使用空心心形叠加斜线，避免依赖额外图标资源。
+        renderTarget_->DrawTextW(L"\u2661", 1, btnFormat_.Get(), rect, iconBrush);
+        const FLOAT pad = (rect.right - rect.left) * 0.24f;
+        renderTarget_->DrawLine(
+            D2D1::Point2F(rect.left + pad, rect.top + pad),
+            D2D1::Point2F(rect.right - pad, rect.bottom - pad),
+            iconBrush,
+            std::max(1.5f, (rect.right - rect.left) * 0.07f));
+    };
 
     if (isVerticalTaskbar_) {
         // ── 垂直任务栏：按钮垂直堆叠（窄窗口放不下水平排列）──
@@ -189,9 +206,9 @@ void TaskbarRenderer::DrawHoverControls(bool isPlaying) {
             iconBrush.GetAddressOf());
         if (!iconBrush || !btnFormat_) return;
 
-        // 上一首 ⏮ (顶部)
+        // 上一首 / 私人 FM 不喜欢 (顶部)
         D2D1_RECT_F prevRect = D2D1::RectF(btnX, startY, btnX + btnSize, startY + btnSize);
-        renderTarget_->DrawTextW(L"\u23EE", 1, btnFormat_.Get(), prevRect, iconBrush.Get());
+        drawPrevOrDislike(prevRect, iconBrush.Get());
 
         // 暂停/播放 ⏸/▶ (中间)
         FLOAT ppY = startY + btnSize + spacing;
@@ -230,9 +247,9 @@ void TaskbarRenderer::DrawHoverControls(bool isPlaying) {
             iconBrush.GetAddressOf());
         if (!iconBrush || !btnFormat_) return;
 
-        // 上一首 ⏮ (U+23EE)
+        // 上一首 / 私人 FM 不喜欢
         D2D1_RECT_F prevRect = D2D1::RectF(startX, btnY, startX + btnSize, btnY + btnSize);
-        renderTarget_->DrawTextW(L"\u23EE", 1, btnFormat_.Get(), prevRect, iconBrush.Get());
+        drawPrevOrDislike(prevRect, iconBrush.Get());
 
         // 暂停/播放 ⏸ (U+23F8) / ▶ (U+25B6)
         FLOAT ppX = startX + btnSize + spacing;

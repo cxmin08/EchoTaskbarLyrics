@@ -50,7 +50,7 @@ private:
                                           float opacity = 1.0f);
     void DrawTranslatedText(const std::wstring& text, const float* overridePaddingX = nullptr, float opacity = 1.0f);
     void DrawCentered(const std::wstring& text, ID2D1Brush* brush, float yOffset);
-    void DrawHoverControls(bool isPlaying);
+    void DrawHoverControls(bool isPlaying, bool isPersonalFM);
     void PresentToLayeredWindow();
 
     // ═════ 卡片模式渲染（无卡拉OK效果） ═════

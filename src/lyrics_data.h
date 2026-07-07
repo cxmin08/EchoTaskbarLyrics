@@ -40,6 +40,7 @@ struct LyricsData {
 // 播放器状态
 struct PlayerState {
     bool        isPlaying{false};
+    bool        isPersonalFM{false};    // 私人 FM 模式：上一首按钮改为不喜欢
     double      currentTime{0.0};   // 秒
     std::string songTitle;           // 可选,用于调试
     std::string coverArtUrl;         // 专辑封面 URL（可能为空）
@@ -62,6 +63,7 @@ struct RenderState {
     int         currentLineIndex{-1}; // -1 表示未匹配
     bool        hasLyrics{false};
     bool        isPlaying{false};
+    bool        isPersonalFM{false};   // 私人 FM 模式：左侧控制按钮显示/执行不喜欢
     double      currentTime{0.0};     // 秒
     bool        isHovering{false};    // 鼠标是否悬停在歌词窗口上
     bool        isDragging{false};    // 是否正在拖动歌词窗口

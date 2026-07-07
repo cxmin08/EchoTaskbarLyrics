@@ -619,7 +619,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             if (!app.httpServer) return;
             switch (btn) {
             case echo::HoverButton::Prev:
-                app.httpServer->EnqueueControlCommand("previousTrack");
+                // 私人 FM 中左侧按钮对应“不喜欢”，普通播放仍是上一首。
+                app.httpServer->EnqueueControlCommand(
+                    (app.parser && app.parser->GetCurrentRenderState().isPersonalFM)
+                        ? "dislikeFm"
+                        : "previousTrack");
                 break;
             case echo::HoverButton::PlayPause:
                 app.httpServer->EnqueueControlCommand("togglePlayback");
@@ -687,6 +691,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             echo::PlayerState st;
             if (j.contains("isPlaying") && j["isPlaying"].is_boolean()) {
                 st.isPlaying = j["isPlaying"].get<bool>();
+            }
+            // EchoMusic 插件桥接字段；兼容几个可能的命名，避免上游字段名调整导致失效。
+            if (j.contains("isPersonalFM") && j["isPersonalFM"].is_boolean()) {
+                st.isPersonalFM = j["isPersonalFM"].get<bool>();
+            } else if (j.contains("isPrivateFM") && j["isPrivateFM"].is_boolean()) {
+                st.isPersonalFM = j["isPrivateFM"].get<bool>();
+            } else if (j.contains("personalFM") && j["personalFM"].is_boolean()) {
+                st.isPersonalFM = j["personalFM"].get<bool>();
             }
             if (j.contains("currentTime") && j["currentTime"].is_number()) {
                 st.currentTime = j["currentTime"].get<double>();
