@@ -288,6 +288,7 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     pCaptureClient->Release();
     pAudioClient->Release();
     CoUninitialize();
+    parent->running_ = false;
     Log("[Spectrum] Capture stopped\n");
 }
 
@@ -303,6 +304,23 @@ SpectrumCapture::~SpectrumCapture() {
 bool SpectrumCapture::Start() {
     if (running_.load()) return true;
 
+    if (impl_->captureThread && impl_->captureThread->joinable()) {
+        impl_->captureThread->join();
+    }
+    impl_->captureThread.reset();
+
+    {
+        std::lock_guard<std::mutex> lock(impl_->spectrumMutex);
+        impl_->spectrumOutput.clear();
+        impl_->smoothSpectrum.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(impl_->ringMutex);
+        std::fill(impl_->ringBuffer.begin(), impl_->ringBuffer.end(), 0.0f);
+        impl_->ringWritePos = 0;
+        impl_->ringSamplesAvailable = 0;
+    }
+
     running_ = true; // 先置位避免阻塞调用方
     impl_->captureThread = std::make_unique<std::thread>(
         &Impl::CaptureLoop, impl_.get(), this);
@@ -310,10 +328,10 @@ bool SpectrumCapture::Start() {
 }
 
 void SpectrumCapture::Stop() {
-    if (!running_.load()) return;
-
     running_ = false;
-    if (impl_->captureThread && impl_->captureThread->joinable()) {
+    if (!impl_->captureThread) return;
+
+    if (impl_->captureThread->joinable()) {
         DWORD waitResult = ::WaitForSingleObject(
             impl_->captureThread->native_handle(),
             echo::constants::THREAD_JOIN_TIMEOUT_MS);

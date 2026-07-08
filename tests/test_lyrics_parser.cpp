@@ -356,6 +356,58 @@ TEST_CASE("GetCurrentRenderState - pure music detection", "[GetCurrentRenderStat
     REQUIRE(state.hasLyrics == false);
 }
 
+TEST_CASE("GetCurrentRenderState - non-lyric placeholders are treated as no lyrics", "[GetCurrentRenderState]") {
+    const std::vector<std::string> placeholders = {
+        "此歌曲为没有填词的纯音乐，请您欣赏",
+        "暂无歌词",
+        "Instrumental",
+        "♪ ♪ ♪",
+    };
+
+    for (const auto& text : placeholders) {
+        LyricsParser parser;
+        LyricsData data;
+        data.valid = true;
+        data.lines.push_back({text, "", 0, {}});
+        parser.UpdateLyrics(data);
+
+        auto state = parser.GetCurrentRenderState();
+        REQUIRE(state.hasLyrics == false);
+    }
+}
+
+TEST_CASE("GetCurrentRenderState - invalid lyrics clear previous lyric state", "[GetCurrentRenderState]") {
+    LyricsParser parser;
+    parser.UpdateLyrics(MakeData({0}, {"Old lyric"}));
+
+    LyricsData emptyData;
+    emptyData.valid = false;
+    parser.UpdateLyrics(emptyData);
+
+    auto state = parser.GetCurrentRenderState();
+    REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.currentLine.empty());
+}
+
+TEST_CASE("GetCurrentRenderState - no lyric state keeps cover metadata", "[GetCurrentRenderState]") {
+    LyricsParser parser;
+    LyricsData data;
+    data.valid = true;
+    data.lines.push_back({"Instrumental", "", 0, {}});
+    parser.UpdateLyrics(data);
+
+    PlayerState ps;
+    ps.isPlaying = true;
+    ps.coverArtUrl = "https://example.test/cover.jpg";
+    ps.songName = "Pure Track";
+    parser.UpdatePlayerState(ps);
+
+    auto state = parser.GetCurrentRenderState();
+    REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.coverArtUrl == ps.coverArtUrl);
+    REQUIRE(state.songName == ps.songName);
+}
+
 TEST_CASE("GetCurrentRenderState - nextLine preview", "[GetCurrentRenderState]") {
     LyricsParser parser;
     parser.UpdateLyrics(MakeData({0, 2000, 4000}, {"First", "Second", "Third"}));

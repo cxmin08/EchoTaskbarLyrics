@@ -3,7 +3,9 @@
 #include "lyrics_parser.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <initializer_list>
 #include <regex>
 #include <sstream>
 
@@ -24,6 +26,67 @@ double GetWallTimeSeconds() {
     LARGE_INTEGER counter;
     ::QueryPerformanceCounter(&counter);
     return static_cast<double>(counter.QuadPart) / static_cast<double>(freq.QuadPart);
+}
+
+std::string TrimAscii(std::string s) {
+    auto isSpace = [](unsigned char ch) {
+        return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+    };
+    while (!s.empty() && isSpace(static_cast<unsigned char>(s.front()))) {
+        s.erase(s.begin());
+    }
+    while (!s.empty() && isSpace(static_cast<unsigned char>(s.back()))) {
+        s.pop_back();
+    }
+    return s;
+}
+
+std::string ToLowerAscii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return s;
+}
+
+bool ContainsAny(const std::string& text, std::initializer_list<const char*> needles) {
+    for (const char* needle : needles) {
+        if (text.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool IsDecorativePlaceholder(std::string text) {
+    text = TrimAscii(text);
+    if (text.empty()) return true;
+    for (const char* token : {"[", "]", "(", ")", "{", "}", "<", ">",
+                              " ", "\t", ".", ",", "-", "_", "~",
+                              "*", "·", "•", "。", "，", "、", "！",
+                              "!", "?", "？", "…", "♪", "♫", "♬", "♩"}) {
+        size_t pos = 0;
+        const size_t len = std::char_traits<char>::length(token);
+        while (len > 0 && (pos = text.find(token, pos)) != std::string::npos) {
+            text.erase(pos, len);
+        }
+    }
+    return text.empty();
+}
+
+bool IsNonLyricPlaceholder(const std::string& text) {
+    const std::string trimmed = TrimAscii(text);
+    if (trimmed.empty() || IsDecorativePlaceholder(trimmed)) return true;
+
+    if (ContainsAny(trimmed, {
+            "纯音乐", "純音樂", "此歌曲为没有填词的纯音乐", "该歌曲为没有填词的纯音乐",
+            "此歌曲为纯音乐", "该歌曲为纯音乐", "没有填词", "暂无歌词",
+            "暂时没有歌词", "没有歌词", "无歌词", "未找到歌词", "歌词加载中"})) {
+        return true;
+    }
+
+    const std::string lower = ToLowerAscii(trimmed);
+    return ContainsAny(lower, {
+        "instrumental", "music only", "no lyrics", "no lyric",
+        "lyrics unavailable", "lyric unavailable", "lyrics not available",
+        "lyric not available"});
 }
 
 } // namespace
@@ -84,6 +147,8 @@ RenderState LyricsParser::GetCurrentRenderState() const {
 
     out.isPlaying    = state_.isPlaying;
     out.isPersonalFM = state_.isPersonalFM;
+    out.coverArtUrl  = state_.coverArtUrl;
+    out.songName     = state_.songName;
 
     // ── 本地时钟推算：播放状态下用本地时间插值 currentTime ──
     // 目的：即使 playerState 消息频率低（如每秒一次），progress 也能每帧平滑推进
@@ -104,15 +169,13 @@ RenderState LyricsParser::GetCurrentRenderState() const {
     }
     out.hasLyrics = true;
 
-    // 检测纯音乐标记：若所有非空歌词行均为纯音乐占位文本，
+    // 检测纯音乐/无歌词占位：若所有非空歌词行都是占位文本，
     // 则视为无歌词，交由上层渲染频谱而非文字。
     {
         bool allInstrumental = true;
         for (const auto& line : lyrics_.lines) {
             if (line.text.empty()) continue;
-            if (line.text.find("纯音乐") == std::string::npos &&
-                line.text.find("Instrumental") == std::string::npos &&
-                line.text.find("instrumental") == std::string::npos) {
+            if (!IsNonLyricPlaceholder(line.text)) {
                 allInstrumental = false;
                 break;
             }
@@ -144,10 +207,6 @@ RenderState LyricsParser::GetCurrentRenderState() const {
     if (idx + 1 < static_cast<int>(lyrics_.lines.size())) {
         out.nextLine = lyrics_.lines[idx + 1].text;
     }
-
-    // 传递封面 URL 和歌曲名（来自 PlayerState）
-    out.coverArtUrl = state_.coverArtUrl;
-    out.songName    = state_.songName;
 
     // 在该行内计算字符级进度
     if (!line.characters.empty()) {

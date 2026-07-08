@@ -340,9 +340,20 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (app->parser && app->renderer) {
                 auto state = app->parser->GetCurrentRenderState();
 
-                // 3.1 集成频谱数据（纯音乐播放时使用）
-                if (app->spectrumCapture && app->spectrumCapture->IsRunning()) {
-                    state.spectrumBands = app->spectrumCapture->GetSpectrum(SPECTRUM_NUM_BANDS);
+                // 3.1 集成频谱数据（纯音乐播放时使用）。WASAPI 设备切换/休眠恢复时
+                // 采集线程可能退出，纯音乐状态下节流重启，避免律动停在旧帧。
+                if (app->spectrumCapture) {
+                    if (!app->spectrumCapture->IsRunning() && state.isPlaying && !state.hasLyrics) {
+                        static ULONGLONG lastSpectrumRestartTick = 0;
+                        const ULONGLONG nowTick = ::GetTickCount64();
+                        if (lastSpectrumRestartTick == 0 || nowTick - lastSpectrumRestartTick >= 3000) {
+                            lastSpectrumRestartTick = nowTick;
+                            app->spectrumCapture->Start();
+                        }
+                    }
+                    if (app->spectrumCapture->IsRunning()) {
+                        state.spectrumBands = app->spectrumCapture->GetSpectrum(SPECTRUM_NUM_BANDS);
+                    }
                 }
 
                 // 3. 附加 UI 状态（悬停/拖动，用于判断是否显示控制按钮）
@@ -736,8 +747,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             if (j.contains("lyricsData") || j.contains("data")) {
                 echo::LyricsData data;
                 auto& ld = j.contains("lyricsData") ? j["lyricsData"] : j["data"];
+                bool hasLyricsPayload = false;
 
                 if (ld.is_array()) {
+                    hasLyricsPayload = true;
                     for (const auto& lineJson : ld) {
                         if (data.lines.size() >= echo::constants::MAX_LYRIC_LINES) break;
                         echo::LyricLine line;
@@ -760,19 +773,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
                         data.lines.push_back(std::move(line));
                     }
                 } else if (ld.is_string()) {
+                    hasLyricsPayload = true;
                     // KRC 字符串格式：使用公共解析方法
                     data = echo::WebSocketClient::ParseKrcString(ld.get<std::string>());
                 }
 
                 data.valid = !data.lines.empty();
-                if (data.valid) {
+                if (hasLyricsPayload) {
                     parser.UpdateLyrics(data);
-                    if (app.taskbarWindow) {
-                        HWND h = taskbarWindow.GetHandle();
-                        ::ShowWindow(h, SW_SHOWNA);
-                        ::SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
-                                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-                    }
+                }
+                if (hasLyricsPayload && (data.valid || st.isPlaying) && app.taskbarWindow) {
+                    HWND h = taskbarWindow.GetHandle();
+                    ::ShowWindow(h, SW_SHOWNA);
+                    ::SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
+                                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
                 }
             }
 
