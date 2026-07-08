@@ -55,5 +55,7 @@ ROADMAP.md
 *.7z
 
 # Misc
+__pycache__/
+*.pyc
 Thumbs.db
 .DS_Store

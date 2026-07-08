@@ -1,9 +1,10 @@
 {
   "id": "echo-taskbar-lyrics",
   "name": "任务栏歌词",
-  "version": "1.0.3",
+  "version": "1.5.0",
   "description": "EchoMusic 任务栏歌词插件，支持卡拉 OK 模式和卡片模式。",
   "author": "cxmin08",
+  "license": "GPL-3.0",
   "icon": "icons/icon256.png",
   "main": "index.js",
   "downloadUrl": "https://github.com/cxmin08/EchoTaskbarLyrics/releases/latest/download/echo-taskbar-lyrics.zip",

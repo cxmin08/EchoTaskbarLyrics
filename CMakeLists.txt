@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0
+
 cmake_minimum_required(VERSION 3.20)
 
 project(EchoTaskbarLyrics
@@ -229,6 +231,9 @@ set(SOURCES
     src/websocket_client.cpp
     src/http_server.cpp
     src/d2d_settings_window.cpp
+    src/d2d_settings_window_controls.cpp
+    src/d2d_settings_window_input.cpp
+    src/d2d_settings_window_render.cpp
     src/lyrics_parser.cpp
     src/shell_companion.cpp
     src/taskbar_window.cpp
@@ -257,6 +262,7 @@ set(HEADERS
     src/websocket_client.h
     src/http_server.h
     src/d2d_settings_window.h
+    src/d2d_settings_window_internal.h
     src/color_picker.h
     src/color_utils.h
     src/settings_draw_utils.h

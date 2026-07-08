@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0
+
 const DEFAULT_SETTINGS = {
-  enabled: true,
   httpPort: 6523,
   syncIntervalMs: 1000,
 };
@@ -23,9 +24,6 @@ const clamp = (value, min, max) =>
 const normalizeSettings = (value) => {
   const source = value && typeof value === "object" ? value : {};
   return {
-    ...DEFAULT_SETTINGS,
-    ...source,
-    enabled: source.enabled ?? DEFAULT_SETTINGS.enabled,
     httpPort: Math.round(
       clamp(source.httpPort ?? DEFAULT_SETTINGS.httpPort, 1024, 65535),
     ),
@@ -249,7 +247,7 @@ const buildPayload = (snapshot) => {
 };
 
 const syncSnapshot = async () => {
-  if (!state?.settings.enabled || !state.ready || !latestSnapshot) return;
+  if (!state?.ready || !latestSnapshot) return;
   const payload = buildPayload(latestSnapshot);
   await requestNative("/lyrics", {
     method: "POST",
@@ -374,25 +372,17 @@ const registerSettings = (ctx) => {
   const Settings = ctx.vue.defineComponent({
     name: "EchoTaskbarLyricsSettings",
     setup() {
-      const { defineAsyncComponent, h } = ctx.vue;
-      const Button = defineAsyncComponent(ctx.ui.components.Button);
-      const Switch = defineAsyncComponent(ctx.ui.components.Switch);
+      const { h } = ctx.vue;
 
       const save = async (patch) => {
-        const wasEnabled = Boolean(state.settings.enabled);
         const previousPort = state.settings.httpPort;
         const previousSyncIntervalMs = state.settings.syncIntervalMs;
         state.settings = normalizeSettings({ ...state.settings, ...patch });
         await ctx.storage.set(STORAGE_KEY, state.settings);
-        const isEnabled = Boolean(state.settings.enabled);
-        if (wasEnabled !== isEnabled) {
-          if (isEnabled) await startNative(ctx);
-          else await stopNative(ctx);
-        } else if (isEnabled && previousPort !== state.settings.httpPort) {
+        if (previousPort !== state.settings.httpPort) {
           await stopNative(ctx);
           await startNative(ctx);
         } else if (
-          isEnabled &&
           previousSyncIntervalMs !== state.settings.syncIntervalMs &&
           state.ready
         ) {
@@ -402,20 +392,6 @@ const registerSettings = (ctx) => {
 
       return () =>
         h("div", { style: "display: grid; gap: 12px;" }, [
-          h(
-            "label",
-            {
-              style:
-                "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
-            },
-            [
-              h("span", "启用"),
-              h(Switch, {
-                modelValue: state.settings.enabled,
-                "onUpdate:modelValue": (value) => save({ enabled: Boolean(value) }),
-              }),
-            ],
-          ),
           h("label", { style: "display: grid; gap: 6px;" }, [
             h("span", "本地端口"),
             h("input", {
@@ -432,18 +408,6 @@ const registerSettings = (ctx) => {
                 }),
             }),
           ]),
-          h(
-            Button,
-            {
-              size: "xs",
-              variant: "outline",
-              onClick: async () => {
-                await stopNative(ctx);
-                await startNative(ctx);
-              },
-            },
-            { default: () => "重启任务栏歌词" },
-          ),
         ]);
     },
   });
@@ -456,8 +420,11 @@ const registerSettings = (ctx) => {
 };
 
 export async function activate(ctx) {
+  const settings = normalizeSettings(await ctx.storage.get(STORAGE_KEY));
+  await ctx.storage.set(STORAGE_KEY, settings);
+
   state = ctx.vue.reactive({
-    settings: normalizeSettings(await ctx.storage.get(STORAGE_KEY)),
+    settings,
     authToken: await getToken(ctx),
     ready: false,
   });
@@ -471,16 +438,7 @@ export async function activate(ctx) {
     });
   });
 
-  ctx.commands.register("restart", async () => {
-    await stopNative(ctx);
-    await startNative(ctx);
-  }, {
-    title: "重启任务栏歌词",
-  });
-
-  if (state.settings.enabled) {
-    await startNative(ctx);
-  }
+  await startNative(ctx);
 }
 
 export async function deactivate(ctx) {

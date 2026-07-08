@@ -1,4 +1,5 @@
 @echo off
+REM SPDX-License-Identifier: GPL-3.0
 REM ============================================================
 REM  EchoMusic Taskbar Lyrics - One-click Build Script
 REM ============================================================
@@ -65,7 +66,7 @@ cmake --build build --config !BUILD_TYPE! --parallel || (
 echo.
 echo ============================================================
 echo   Build complete.
-echo   Output: build\Release\EchoTaskbarLyrics.exe
+echo   Output: build\!BUILD_TYPE!\EchoTaskbarLyrics.exe
 echo ============================================================
 echo.
 pause

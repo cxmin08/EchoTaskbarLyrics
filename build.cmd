@@ -1,4 +1,5 @@
 @echo off
+REM SPDX-License-Identifier: GPL-3.0
 REM Build script for EchoTaskbarLyrics
 REM Automatically applies MSVC 14.44 toolset to match ixwebsocket.lib
 

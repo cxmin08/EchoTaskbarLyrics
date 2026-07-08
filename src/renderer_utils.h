@@ -19,6 +19,15 @@ inline std::wstring Utf8ToWide(const std::string& s) {
     return out;
 }
 
+inline std::string WideToUtf8(const std::wstring& s) {
+    if (s.empty()) return {};
+    int len = ::WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return {};
+    std::string out(static_cast<size_t>(len - 1), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, &out[0], len, nullptr, nullptr);
+    return out;
+}
+
 inline wchar_t FirstUtf8CharAsWide(const std::string& s) {
     if (s.empty()) return L'?';
     int len = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), 4, nullptr, 0);

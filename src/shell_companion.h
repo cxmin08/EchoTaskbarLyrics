@@ -6,7 +6,7 @@
 //   - 封装 SetWinEventHook 基础设施（任务栏位置监听、Start Menu 冻结锁、前台检测）
 //   - 提供干净查询接口给 TaskbarWindow / main.cpp
 //
-// v0.5.x: 从 taskbar_window.h/cpp 中抽取
+// 从 taskbar_window.h/cpp 中抽取
 #pragma once
 
 #include "fullscreen_detector.h"

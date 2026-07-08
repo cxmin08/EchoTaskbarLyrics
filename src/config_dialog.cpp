@@ -4,6 +4,7 @@
 // 使用 Win32 对话框实现配置界面，不依赖资源文件
 // 所有控件在 OnInitDialog 中动态创建
 #include "config_dialog.h"
+#include "renderer_utils.h"
 
 #include <commdlg.h>
 #include <windows.h>
@@ -52,6 +53,9 @@ enum {
 
 namespace {
 
+using renderer_utils::Utf8ToWide;
+using renderer_utils::WideToUtf8;
+
 // 线程局部回调（由 Show 设置，DialogProc 使用）
 std::function<void()>& GetOnUnbind() {
     static std::function<void()> s_onUnbind;
@@ -62,28 +66,6 @@ std::function<void()>& GetOnUnbind() {
 bool& GetDialogResult() {
     static bool s_result = false;
     return s_result;
-}
-
-std::wstring Utf8ToWide(const std::string& s) {
-    if (s.empty()) return {};
-    int len = ::MultiByteToWideChar(CP_UTF8, 0, s.data(),
-                                    static_cast<int>(s.size()), nullptr, 0);
-    if (len <= 0) return {};
-    std::wstring out(static_cast<size_t>(len), L'\0');
-    ::MultiByteToWideChar(CP_UTF8, 0, s.data(),
-                          static_cast<int>(s.size()), &out[0], len);
-    return out;
-}
-
-std::string WideToUtf8(const std::wstring& s) {
-    if (s.empty()) return {};
-    int len = ::WideCharToMultiByte(CP_UTF8, 0, s.data(),
-                                    static_cast<int>(s.size()), nullptr, 0, nullptr, nullptr);
-    if (len <= 0) return {};
-    std::string out(static_cast<size_t>(len), '\0');
-    ::WideCharToMultiByte(CP_UTF8, 0, s.data(),
-                          static_cast<int>(s.size()), &out[0], len, nullptr, nullptr);
-    return out;
 }
 
 // 创建标签

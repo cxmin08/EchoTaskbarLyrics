@@ -14,6 +14,7 @@
 #include "lyrics_parser.h"
 #include "native_messaging.h"
 #include "renderer.h"
+#include "renderer_utils.h"
 #include "spectrum_capture.h"
 #include "taskbar_window.h"
 #include "tray_icon.h"
@@ -57,22 +58,13 @@ struct AppContext {
 };
 
 using namespace echo::constants;
+using echo::renderer_utils::WideToUtf8;
 
 struct RuntimeOptions {
     bool echoPluginMode{false};
     int httpPortOverride{0};
     std::string authToken;
 };
-
-std::string WideToUtf8Local(const std::wstring& value) {
-    if (value.empty()) return {};
-    const int len = ::WideCharToMultiByte(
-        CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (len <= 0) return {};
-    std::string out(static_cast<size_t>(len - 1), '\0');
-    ::WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, out.data(), len, nullptr, nullptr);
-    return out;
-}
 
 RuntimeOptions ParseRuntimeOptions() {
     RuntimeOptions options;
@@ -87,7 +79,7 @@ RuntimeOptions ParseRuntimeOptions() {
         } else if (arg == L"--http-port" && i + 1 < argc) {
             options.httpPortOverride = std::max(0, _wtoi(argv[++i]));
         } else if (arg == L"--auth-token" && i + 1 < argc) {
-            options.authToken = WideToUtf8Local(argv[++i]);
+            options.authToken = WideToUtf8(argv[++i]);
         }
     }
 

@@ -5,7 +5,7 @@
 //   - shell_companion:    任务栏几何/全屏检测/WinEvent 钩子/定位计算
 //   - taskbar_embedder:   窗口创建/销毁/显隐/SetWindowPos / 拖动/悬停状态
 //
-// A1 拆分重构 → v0.5.x Shell Companion 独立化
+// Shell Companion 独立化
 //
 #pragma once
 
@@ -147,7 +147,7 @@ private:
     ButtonCallback onButtonClicked_;
     HoverChangedCallback onHoverChanged_;
 
-    // ── v0.5.x: ShellCompanion 封装 Shell 层逻辑 ──
+    // ShellCompanion 封装 Shell 层逻辑
     ShellCompanion companion_;
 };
 

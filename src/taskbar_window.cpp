@@ -3,7 +3,7 @@
 // Win11 兼容方案: 独立浮动窗口覆盖在任务栏上方
 // (类似 TrafficMonitor / TranslucentTB 的实现方式)
 //
-// v0.5.x: Shell 层逻辑已迁移至 shell_companion.cpp
+// Shell 层逻辑已迁移至 shell_companion.cpp
 #include "taskbar_window.h"
 #include "constants.h"
 

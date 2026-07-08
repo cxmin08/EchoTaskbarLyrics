@@ -5,6 +5,7 @@
 //   - 使用 Direct2D + DirectWrite 绘制现代化设置界面（圆角、阴影、毛玻璃背景）
 //   - 提供与 settings.html 功能完全一致的设置项
 //   - 仅保留原生 Direct2D 设置界面
+//   - 实现按 lifecycle / controls / render / input 拆分到多个 .cpp
 //   - 颜色选择器弹窗已拆分至 color_picker.h/.cpp
 //
 #pragma once
@@ -159,8 +160,6 @@ private:
     void ApplyAndSave();
     // 取消（关闭窗口）
     void Cancel();
-
-    // 颜色工具（已移至 color_utils.h，此处保留引用以兼容旧调用）
 
     HWND hwnd_{nullptr};
     HINSTANCE hInstance_{nullptr};

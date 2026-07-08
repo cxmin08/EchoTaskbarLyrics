@@ -2,6 +2,7 @@
 // config.cpp - 配置管理实现
 #include "config.h"
 #include "logger.h"
+#include "renderer_utils.h"
 
 #include <nlohmann/json.hpp>
 
@@ -18,15 +19,7 @@
 
 namespace echo {
 
-// ── 本地辅助函数：UTF-8 ↔ 宽字符转换 ──
-static std::string WideToUtf8(const std::wstring& ws) {
-    if (ws.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return {};
-    std::string s(n - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, &s[0], n, nullptr, nullptr);
-    return s;
-}
+using renderer_utils::WideToUtf8;
 
 namespace {
 

@@ -8,6 +8,7 @@
       "path": "echo-taskbar-lyrics",
       "repo": "https://github.com/cxmin08/EchoTaskbarLyrics",
       "homepage": "https://github.com/cxmin08/EchoTaskbarLyrics",
+      "license": "GPL-3.0",
       "tags": ["lyrics", "taskbar", "windows", "process"]
     }
   ]
