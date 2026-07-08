@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -29,6 +30,12 @@ namespace {
 
 // FFT 点数
 constexpr int FFT_SIZE = 1024;
+constexpr float SPECTRUM_DECAY = 0.88f;
+constexpr float SPECTRUM_ZERO_THRESHOLD = 0.003f;
+
+uint64_t NowTickMs() {
+    return static_cast<uint64_t>(::GetTickCount64());
+}
 
 // Hann 窗
 void ApplyHannWindow(std::vector<float>& buf) {
@@ -80,6 +87,7 @@ struct SpectrumCapture::Impl {
     std::vector<float>          spectrumOutput;
     std::vector<float>          smoothSpectrum;
     mutable std::mutex          spectrumMutex;
+    std::atomic<uint64_t>       lastFftTick{0};
 
     static constexpr size_t kRingBufferSize = FFT_SIZE * 2;
     std::vector<float>          ringBuffer;
@@ -87,8 +95,26 @@ struct SpectrumCapture::Impl {
     size_t                      ringSamplesAvailable{0};
     std::mutex                  ringMutex;
 
+    void DecayOutput();
     void CaptureLoop(SpectrumCapture* parent);
 };
+
+void SpectrumCapture::Impl::DecayOutput() {
+    if (smoothSpectrum.empty()) return;
+
+    bool changed = false;
+    for (float& v : smoothSpectrum) {
+        const float next = (v < SPECTRUM_ZERO_THRESHOLD)
+            ? 0.0f
+            : v * SPECTRUM_DECAY;
+        if (next != v) changed = true;
+        v = next;
+    }
+    if (!changed) return;
+
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    spectrumOutput = smoothSpectrum;
+}
 
 void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -175,12 +201,14 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
 
     Log("[Spectrum] Capture started\n");
     parent->running_ = true;
+    lastFftTick.store(NowTickMs(), std::memory_order_relaxed);
 
     smoothSpectrum.clear();
 
     while (parent->running_.load()) {
         Sleep(16); // ~60fps
 
+        bool receivedAudioSamples = false;
         UINT32 packetLength = 0;
         hr = pCaptureClient->GetNextPacketSize(&packetLength);
         if (FAILED(hr)) break;
@@ -206,6 +234,7 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
                         ringSamplesAvailable++;
                     }
                 }
+                receivedAudioSamples = true;
             }
 
             hr = pCaptureClient->ReleaseBuffer(numFrames);
@@ -281,6 +310,9 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
                 std::lock_guard<std::mutex> lock(spectrumMutex);
                 spectrumOutput = smoothSpectrum;
             }
+            lastFftTick.store(NowTickMs(), std::memory_order_relaxed);
+        } else if (!receivedAudioSamples) {
+            DecayOutput();
         }
     }
 
@@ -309,6 +341,7 @@ bool SpectrumCapture::Start() {
     }
     impl_->captureThread.reset();
 
+    impl_->lastFftTick.store(NowTickMs(), std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(impl_->spectrumMutex);
         impl_->spectrumOutput.clear();
@@ -325,6 +358,14 @@ bool SpectrumCapture::Start() {
     impl_->captureThread = std::make_unique<std::thread>(
         &Impl::CaptureLoop, impl_.get(), this);
     return true;
+}
+
+bool SpectrumCapture::IsStale(uint64_t timeoutMs) const {
+    if (!running_.load()) return false;
+
+    const uint64_t last = impl_->lastFftTick.load(std::memory_order_relaxed);
+    if (last == 0) return false;
+    return NowTickMs() - last >= timeoutMs;
 }
 
 void SpectrumCapture::Stop() {

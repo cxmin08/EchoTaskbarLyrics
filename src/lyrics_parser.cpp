@@ -71,22 +71,39 @@ bool IsDecorativePlaceholder(std::string text) {
     return text.empty();
 }
 
-bool IsNonLyricPlaceholder(const std::string& text) {
+bool IsPureMusicPlaceholder(const std::string& text) {
     const std::string trimmed = TrimAscii(text);
-    if (trimmed.empty() || IsDecorativePlaceholder(trimmed)) return true;
-
     if (ContainsAny(trimmed, {
             "纯音乐", "純音樂", "此歌曲为没有填词的纯音乐", "该歌曲为没有填词的纯音乐",
-            "此歌曲为纯音乐", "该歌曲为纯音乐", "没有填词", "暂无歌词",
-            "暂时没有歌词", "没有歌词", "无歌词", "未找到歌词", "歌词加载中"})) {
+            "此歌曲为纯音乐", "该歌曲为纯音乐"})) {
+        return true;
+    }
+
+    const std::string lower = ToLowerAscii(trimmed);
+    return ContainsAny(lower, {"instrumental", "music only"});
+}
+
+bool IsNonLyricPlaceholder(const std::string& text) {
+    const std::string trimmed = TrimAscii(text);
+    if (trimmed.empty() || IsDecorativePlaceholder(trimmed) ||
+        IsPureMusicPlaceholder(trimmed)) {
+        return true;
+    }
+
+    if (ContainsAny(trimmed, {
+            "没有填词", "暂无歌词", "暂时没有歌词", "没有歌词",
+            "无歌词", "未找到歌词", "歌词加载中"})) {
         return true;
     }
 
     const std::string lower = ToLowerAscii(trimmed);
     return ContainsAny(lower, {
-        "instrumental", "music only", "no lyrics", "no lyric",
-        "lyrics unavailable", "lyric unavailable", "lyrics not available",
-        "lyric not available"});
+        "no lyrics", "no lyric", "lyrics unavailable", "lyric unavailable",
+        "lyrics not available", "lyric not available"});
+}
+
+std::string SongIdentity(const PlayerState& state) {
+    return state.songName.empty() ? state.songTitle : state.songName;
 }
 
 } // namespace
@@ -98,6 +115,11 @@ void LyricsParser::UpdateLyrics(const LyricsData& data) {
 
 void LyricsParser::UpdatePlayerState(const PlayerState& state) {
     std::lock_guard<std::mutex> lock(mutex_);
+    const std::string oldSong = SongIdentity(state_);
+    const std::string newSong = SongIdentity(state);
+    if (!oldSong.empty() && !newSong.empty() && oldSong != newSong) {
+        lyrics_ = LyricsData{};
+    }
     state_ = state;
     // 记录本地高精度时钟，用于 GetCurrentRenderState() 中推算时间
     lastUpdateWallTime_ = GetWallTimeSeconds();
@@ -169,19 +191,26 @@ RenderState LyricsParser::GetCurrentRenderState() const {
     }
     out.hasLyrics = true;
 
-    // 检测纯音乐/无歌词占位：若所有非空歌词行都是占位文本，
-    // 则视为无歌词，交由上层渲染频谱而非文字。
+    // 检测纯音乐/无歌词占位：只有歌词数据明确标记当前整首歌为纯音乐时才律动。
+    // 普通歌曲歌词尚未到达、暂无歌词或加载中，不能走频谱路径。
     {
-        bool allInstrumental = true;
+        bool hasNonEmptyLine = false;
+        bool allNonLyricPlaceholder = true;
+        bool hasPureMusicMarker = false;
         for (const auto& line : lyrics_.lines) {
             if (line.text.empty()) continue;
+            hasNonEmptyLine = true;
+            if (IsPureMusicPlaceholder(line.text)) {
+                hasPureMusicMarker = true;
+            }
             if (!IsNonLyricPlaceholder(line.text)) {
-                allInstrumental = false;
+                allNonLyricPlaceholder = false;
                 break;
             }
         }
-        if (allInstrumental) {
+        if (!hasNonEmptyLine || allNonLyricPlaceholder) {
             out.hasLyrics = false;
+            out.isInstrumental = hasPureMusicMarker;
             return out;
         }
     }

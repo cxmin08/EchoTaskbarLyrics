@@ -62,6 +62,7 @@ struct RenderState {
     double      progress{0.0};        // 0.0 ~ 1.0
     int         currentLineIndex{-1}; // -1 表示未匹配
     bool        hasLyrics{false};
+    bool        isInstrumental{false}; // 当前整首歌已由歌词数据判定为纯音乐
     bool        isPlaying{false};
     bool        isPersonalFM{false};   // 私人 FM 模式：左侧控制按钮显示/执行不喜欢
     double      currentTime{0.0};     // 秒

@@ -340,18 +340,24 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (app->parser && app->renderer) {
                 auto state = app->parser->GetCurrentRenderState();
 
-                // 3.1 集成频谱数据（纯音乐播放时使用）。WASAPI 设备切换/休眠恢复时
-                // 采集线程可能退出，纯音乐状态下节流重启，避免律动停在旧帧。
+                // 3.1 集成频谱数据。只有当前整首歌被歌词数据判定为纯音乐时才显示律动。
+                // WASAPI 设备切换/休眠恢复时采集线程可能退出或卡住，纯音乐状态下节流重启。
                 if (app->spectrumCapture) {
-                    if (!app->spectrumCapture->IsRunning() && state.isPlaying && !state.hasLyrics) {
+                    const bool shouldUseSpectrum = state.isPlaying && state.isInstrumental;
+                    if (shouldUseSpectrum &&
+                        (!app->spectrumCapture->IsRunning() ||
+                         app->spectrumCapture->IsStale(5000))) {
                         static ULONGLONG lastSpectrumRestartTick = 0;
                         const ULONGLONG nowTick = ::GetTickCount64();
                         if (lastSpectrumRestartTick == 0 || nowTick - lastSpectrumRestartTick >= 3000) {
                             lastSpectrumRestartTick = nowTick;
+                            if (app->spectrumCapture->IsRunning()) {
+                                app->spectrumCapture->Stop();
+                            }
                             app->spectrumCapture->Start();
                         }
                     }
-                    if (app->spectrumCapture->IsRunning()) {
+                    if (shouldUseSpectrum && app->spectrumCapture->IsRunning()) {
                         state.spectrumBands = app->spectrumCapture->GetSpectrum(SPECTRUM_NUM_BANDS);
                     }
                 }

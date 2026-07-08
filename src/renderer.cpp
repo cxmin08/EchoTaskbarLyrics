@@ -498,6 +498,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
                          state.currentLine != lastState_.currentLine ||
                          state.currentTranslated != lastState_.currentTranslated ||
                          state.isPlaying != lastState_.isPlaying ||
+                         state.isInstrumental != lastState_.isInstrumental ||
                          state.isPersonalFM != lastState_.isPersonalFM ||
                          state.isHovering != lastState_.isHovering ||
                          state.isDragging != lastState_.isDragging ||
@@ -549,7 +550,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
             } else {
                 RenderCardStyle(state);
             }
-        } else if (state.isPlaying) {
+        } else if (state.isPlaying && state.isInstrumental) {
             // 纯音乐：封面 + 频谱
             const float dpiScale = static_cast<float>(dpi_) / 96.0f;
             const float coverSize = static_cast<float>(settings_.cardCoverSize) * dpiScale;
@@ -619,7 +620,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
                 }
             }
         } else {
-            if (state.isPlaying) {
+            if (state.isPlaying && state.isInstrumental) {
                 if (!state.spectrumBands.empty()) {
                     // 全高频谱
                     DrawSpectrumBars(state.spectrumBands,

@@ -1,7 +1,7 @@
 {
   "id": "echo-taskbar-lyrics",
   "name": "任务栏歌词",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "EchoMusic 任务栏歌词插件，支持卡拉 OK 模式和卡片模式。",
   "author": "cxmin08",
   "icon": "icons/icon256.png",

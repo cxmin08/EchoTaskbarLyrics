@@ -3,6 +3,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -19,6 +20,7 @@ public:
     bool Start();
     void Stop();
     bool IsRunning() const { return running_.load(); }
+    bool IsStale(uint64_t timeoutMs) const;
 
     // 返回归一化 [0,1] 的各频段幅度
     std::vector<float> GetSpectrum(int numBands = 32);

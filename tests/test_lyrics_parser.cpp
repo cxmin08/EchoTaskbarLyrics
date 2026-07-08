@@ -255,6 +255,20 @@ TEST_CASE("GetCurrentRenderState - no lyrics returns empty state", "[GetCurrentR
     LyricsParser parser;
     auto state = parser.GetCurrentRenderState();
     REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.isInstrumental == false);
+}
+
+TEST_CASE("GetCurrentRenderState - playing without lyric payload is not instrumental", "[GetCurrentRenderState]") {
+    LyricsParser parser;
+    PlayerState ps;
+    ps.isPlaying = true;
+    ps.currentTime = 0.5;
+    parser.UpdatePlayerState(ps);
+
+    auto state = parser.GetCurrentRenderState();
+    REQUIRE(state.isPlaying == true);
+    REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.isInstrumental == false);
 }
 
 TEST_CASE("GetCurrentRenderState - with lyrics but no player state", "[GetCurrentRenderState]") {
@@ -354,14 +368,14 @@ TEST_CASE("GetCurrentRenderState - pure music detection", "[GetCurrentRenderStat
 
     auto state = parser.GetCurrentRenderState();
     REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.isInstrumental == true);
 }
 
-TEST_CASE("GetCurrentRenderState - non-lyric placeholders are treated as no lyrics", "[GetCurrentRenderState]") {
+TEST_CASE("GetCurrentRenderState - pure music placeholders are instrumental", "[GetCurrentRenderState]") {
     const std::vector<std::string> placeholders = {
         "此歌曲为没有填词的纯音乐，请您欣赏",
-        "暂无歌词",
         "Instrumental",
-        "♪ ♪ ♪",
+        "music only",
     };
 
     for (const auto& text : placeholders) {
@@ -373,6 +387,28 @@ TEST_CASE("GetCurrentRenderState - non-lyric placeholders are treated as no lyri
 
         auto state = parser.GetCurrentRenderState();
         REQUIRE(state.hasLyrics == false);
+        REQUIRE(state.isInstrumental == true);
+    }
+}
+
+TEST_CASE("GetCurrentRenderState - unavailable lyric placeholders are not instrumental", "[GetCurrentRenderState]") {
+    const std::vector<std::string> placeholders = {
+        "暂无歌词",
+        "歌词加载中",
+        "♪ ♪ ♪",
+        "lyrics unavailable",
+    };
+
+    for (const auto& text : placeholders) {
+        LyricsParser parser;
+        LyricsData data;
+        data.valid = true;
+        data.lines.push_back({text, "", 0, {}});
+        parser.UpdateLyrics(data);
+
+        auto state = parser.GetCurrentRenderState();
+        REQUIRE(state.hasLyrics == false);
+        REQUIRE(state.isInstrumental == false);
     }
 }
 
@@ -386,6 +422,7 @@ TEST_CASE("GetCurrentRenderState - invalid lyrics clear previous lyric state", "
 
     auto state = parser.GetCurrentRenderState();
     REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.isInstrumental == false);
     REQUIRE(state.currentLine.empty());
 }
 
@@ -404,8 +441,32 @@ TEST_CASE("GetCurrentRenderState - no lyric state keeps cover metadata", "[GetCu
 
     auto state = parser.GetCurrentRenderState();
     REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.isInstrumental == true);
     REQUIRE(state.coverArtUrl == ps.coverArtUrl);
     REQUIRE(state.songName == ps.songName);
+}
+
+TEST_CASE("GetCurrentRenderState - song change clears previous instrumental state", "[GetCurrentRenderState]") {
+    LyricsParser parser;
+    LyricsData data;
+    data.valid = true;
+    data.lines.push_back({"纯音乐，请欣赏", "", 0, {}});
+    parser.UpdateLyrics(data);
+
+    PlayerState instrumentalSong;
+    instrumentalSong.isPlaying = true;
+    instrumentalSong.songName = "Instrumental Song";
+    parser.UpdatePlayerState(instrumentalSong);
+    REQUIRE(parser.GetCurrentRenderState().isInstrumental == true);
+
+    PlayerState normalSong;
+    normalSong.isPlaying = true;
+    normalSong.songName = "Normal Song";
+    parser.UpdatePlayerState(normalSong);
+
+    auto state = parser.GetCurrentRenderState();
+    REQUIRE(state.hasLyrics == false);
+    REQUIRE(state.isInstrumental == false);
 }
 
 TEST_CASE("GetCurrentRenderState - nextLine preview", "[GetCurrentRenderState]") {
