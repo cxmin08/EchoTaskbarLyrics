@@ -172,16 +172,19 @@ RenderState LyricsParser::GetCurrentRenderState() const {
     out.coverArtUrl  = state_.coverArtUrl;
     out.songName     = state_.songName;
 
-    // ── 本地时钟推算：播放状态下用本地时间插值 currentTime ──
-    // 目的：即使 playerState 消息频率低（如每秒一次），progress 也能每帧平滑推进
-    // 原理：estimatedTime = lastReceivedTime + (localNow - localThen)
+    // ── 本地时钟推算：仅在播放状态变化、切歌或跳转时需要上游重新同步 ──
+    // EchoMusic 官方插件文档建议根据快照时间与倍速在本地推算，避免持续传输歌词。
     double effectiveTime = state_.currentTime;
     if (state_.isPlaying && lastUpdateWallTime_ > 0.0) {
         const double elapsed = GetWallTimeSeconds() - lastUpdateWallTime_;
-        // 限定最大插值 10 秒，防止异常（睡眠恢复、debug 断点等）导致时间狂奔
-        if (elapsed > 0.0 && elapsed < 10.0) {
-            effectiveTime = state_.currentTime + elapsed;
+        if (elapsed > 0.0) {
+            effectiveTime = state_.currentTime + elapsed * std::max(0.1, state_.playbackRate);
         }
+    }
+    if (state_.duration > 0.0) {
+        effectiveTime = std::clamp(effectiveTime, 0.0, state_.duration);
+    } else {
+        effectiveTime = std::max(0.0, effectiveTime);
     }
     out.currentTime = effectiveTime;
 

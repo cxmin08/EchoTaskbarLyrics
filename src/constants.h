@@ -35,13 +35,12 @@ namespace echo::constants {
 // 网络通信端口
 // ═══════════════════════════════════════
 
-/// EchoMusic WebSocket 服务端口（用于接收歌词数据）
-/// 参考：EchoMusic 源代码中的 WebSocket 服务器初始化。
-/// ⚠️ 作为"默认值"使用；运行时优先从 config.json 读取 advanced.websocket_port。
+/// EchoMusic 旧独立兼容模式的 WebSocket 服务端口。
+/// EchoMusic 插件模式不使用此端口；固定值避免向用户暴露无效配置。
 constexpr int WEBSOCKET_LISTEN_PORT = 6520;
 
-/// 本插件 HTTP 服务器端口（用于 EchoMusic 插件桥接通信）。
-/// ⚠️ 作为"默认值"使用；运行时优先从 config.json 读取 advanced.http_server_port。
+/// EchoMusic 插件与原生辅助程序之间的本地 HTTP 桥接端口。
+/// 仅监听 127.0.0.1，并使用 X-Echo-Token 鉴权；属于内部实现，不作为用户设置暴露。
 constexpr int HTTP_SERVER_PORT = 6523;
 
 /// HTTP / WebSocket 本地鉴权 token（shared-secret）。

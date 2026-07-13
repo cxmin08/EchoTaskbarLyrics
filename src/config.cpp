@@ -151,8 +151,6 @@ bool Config::Load() {
 
         if (j.contains("advanced")) {
             const auto& a = j["advanced"];
-            advanced_.websocketPort        = a.value("websocket_port",          advanced_.websocketPort);
-            advanced_.httpServerPort       = a.value("http_server_port",        advanced_.httpServerPort);
             advanced_.refreshRateHz        = a.value("refresh_rate_hz",          advanced_.refreshRateHz);
             advanced_.debugLog             = a.value("debug_log",               advanced_.debugLog);
             advanced_.enableFullscreenHide = a.value("enable_fullscreen_hide",  advanced_.enableFullscreenHide);
@@ -184,8 +182,6 @@ bool Config::Load() {
         appearance_.marqueeDelayMs      = std::clamp(appearance_.marqueeDelayMs, 0, 10000);
         appearance_.marqueePauseMs      = std::clamp(appearance_.marqueePauseMs, 0, 10000);
         appearance_.marqueeSpeedPxPerSec = std::clamp(appearance_.marqueeSpeedPxPerSec, 10.0f, 500.0f);
-        advanced_.websocketPort   = std::clamp(advanced_.websocketPort, 1024, 65535);
-        advanced_.httpServerPort  = std::clamp(advanced_.httpServerPort, 1024, 65535);
         advanced_.refreshRateHz   = std::clamp(advanced_.refreshRateHz, 1, 120);
 
         // 打印加载结果
@@ -245,8 +241,6 @@ bool Config::Save() const {
     };
 
     j["advanced"] = {
-        {"websocket_port",          advanced_.websocketPort},
-        {"http_server_port",        advanced_.httpServerPort},
         {"refresh_rate_hz",         advanced_.refreshRateHz},
         {"debug_log",               advanced_.debugLog},
         {"enable_fullscreen_hide",  advanced_.enableFullscreenHide},

@@ -8,6 +8,7 @@
 #include <ixwebsocket/IXWebSocket.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <sstream>
@@ -408,6 +409,8 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
                 PlayerState st;
                 st.isPlaying   = true;
                 st.currentTime = j["data"]["currentTime"].get<double>();
+                st.duration = j["data"].value("duration", 0.0);
+                st.playbackRate = std::max(0.1, j["data"].value("playbackRate", 1.0));
                 // 兼容旧 WebSocket 模式下直接携带的私人 FM 状态。
                 st.isPersonalFM = j["data"].value("isPersonalFM", false);
                 // currentSong 可能是 string 或 object，安全提取
@@ -477,6 +480,8 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
             // 私人 FM 状态用于渲染“不喜欢”按钮，并决定左侧按钮命令。
             st.isPersonalFM = d.value("isPersonalFM", false);
             st.currentTime = d.value("currentTime", 0.0);
+            st.duration = d.value("duration", 0.0);
+            st.playbackRate = std::max(0.1, d.value("playbackRate", 1.0));
             st.songTitle   = d.value("songTitle",   "");
 
             // 提取封面 URL：支持 data 层级直接包含 coverArtUrl/pic 等字段

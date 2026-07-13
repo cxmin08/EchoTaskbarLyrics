@@ -408,8 +408,6 @@ void D2DSettingsWindow::ApplyAndSave() {
             ap.cardShowTranslation = c.toggleValue;
         } else if (c.id == "cardCoverPosition") {
             ap.cardCoverPosition = (c.dropdownSelected == 1) ? "right" : "left";
-        } else if (c.id == "wsPort") {
-            adv.websocketPort = atoi(c.textValue.c_str());
         } else if (c.id == "refreshRate") {
             adv.refreshRateHz = static_cast<int>(c.sliderValue);
         } else if (c.id == "debugLog") {

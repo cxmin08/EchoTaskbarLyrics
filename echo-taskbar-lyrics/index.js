@@ -1,41 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0
 
-const DEFAULT_SETTINGS = {
-  httpPort: 6523,
-  syncIntervalMs: 1000,
-};
-
+const NATIVE_HTTP_PORT = 6523;
 const AUTH_HEADER = "X-Echo-Token";
-const STORAGE_KEY = "settings";
 const TOKEN_KEY = "authToken";
 
 let state = null;
 let helperPid = 0;
 let snapshotDispose = null;
-let syncTimer = 0;
-let commandTimer = 0;
+let commandLoopToken = 0;
+let lastNativeSync = null;
 let latestSnapshot = null;
-let settingsDispose = null;
 let nativeStarting = false;
-
-const clamp = (value, min, max) =>
-  Math.max(min, Math.min(max, Number(value) || 0));
-
-const normalizeSettings = (value) => {
-  const source = value && typeof value === "object" ? value : {};
-  return {
-    httpPort: Math.round(
-      clamp(source.httpPort ?? DEFAULT_SETTINGS.httpPort, 1024, 65535),
-    ),
-    syncIntervalMs: Math.round(
-      clamp(
-        source.syncIntervalMs ?? DEFAULT_SETTINGS.syncIntervalMs,
-        300,
-        5000,
-      ),
-    ),
-  };
-};
 
 const makeToken = () => {
   if (globalThis.crypto?.randomUUID) return `EchoTL-${crypto.randomUUID()}`;
@@ -52,7 +27,7 @@ const getToken = async (ctx) => {
   return token;
 };
 
-const getBaseUrl = () => `http://127.0.0.1:${state.settings.httpPort}`;
+const getBaseUrl = () => `http://127.0.0.1:${NATIVE_HTTP_PORT}`;
 
 const requestNative = async (path, options = {}) => {
   const response = await fetch(`${getBaseUrl()}${path}`, {
@@ -231,6 +206,7 @@ const buildPayload = (snapshot) => {
     isPersonalFM: Boolean(playback.isPersonalFM),
     currentTime: getEstimatedPlaybackMs(playback) / 1000,
     duration: Number(playback.duration || track.duration || 0),
+    playbackRate: Math.max(0.1, Number(playback.playbackRate || 1)),
     songName: title,
     songTitle: artist ? `${title} - ${artist}` : title,
     coverArtUrl: pickText(
@@ -246,13 +222,41 @@ const buildPayload = (snapshot) => {
   };
 };
 
-const syncSnapshot = async () => {
+const syncSnapshot = async ({ force = false } = {}) => {
   if (!state?.ready || !latestSnapshot) return;
+
   const payload = buildPayload(latestSnapshot);
+  const now = Date.now();
+  const signature = JSON.stringify({ ...payload, currentTime: 0 });
+  const rawPredictedTime = lastNativeSync
+    ? lastNativeSync.currentTime +
+      (lastNativeSync.isPlaying
+        ? ((now - lastNativeSync.sentAt) / 1000) * lastNativeSync.playbackRate
+        : 0)
+    : 0;
+  const predictedTime =
+    lastNativeSync?.duration > 0
+      ? Math.min(rawPredictedTime, lastNativeSync.duration)
+      : rawPredictedTime;
+  const hasMeaningfulChange =
+    !lastNativeSync ||
+    signature !== lastNativeSync.signature ||
+    Math.abs(payload.currentTime - predictedTime) > 0.75;
+
+  if (!force && !hasMeaningfulChange) return;
+
   await requestNative("/lyrics", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  lastNativeSync = {
+    signature,
+    currentTime: payload.currentTime,
+    isPlaying: payload.isPlaying,
+    playbackRate: payload.playbackRate,
+    duration: payload.duration,
+    sentAt: now,
+  };
 };
 
 const pollCommands = async (ctx) => {
@@ -280,28 +284,22 @@ const pollCommands = async (ctx) => {
       }
     }
   } catch {
-    // The native helper may still be starting or shutting down.
+    // The native helper may still be starting or shutting down. Avoid a hot retry loop.
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 };
 
-const startTimers = (ctx) => {
-  if (syncTimer) window.clearInterval(syncTimer);
-  if (commandTimer) window.clearInterval(commandTimer);
-  syncTimer = window.setInterval(() => {
-    void syncSnapshot().catch((error) => {
-      console.warn("[echo-taskbar-lyrics] sync failed", error);
-    });
-  }, state.settings.syncIntervalMs);
-  commandTimer = window.setInterval(() => {
-    void pollCommands(ctx);
-  }, 500);
+const startCommandLoop = (ctx) => {
+  const token = ++commandLoopToken;
+  void (async () => {
+    while (state?.ready && token === commandLoopToken) {
+      await pollCommands(ctx);
+    }
+  })();
 };
 
-const stopTimers = () => {
-  if (syncTimer) window.clearInterval(syncTimer);
-  if (commandTimer) window.clearInterval(commandTimer);
-  syncTimer = 0;
-  commandTimer = 0;
+const stopCommandLoop = () => {
+  commandLoopToken += 1;
 };
 
 const startNative = async (ctx) => {
@@ -322,8 +320,6 @@ const startNative = async (ctx) => {
       executable: "EchoTaskbarLyrics.exe",
       args: [
         "--echo-plugin",
-        "--http-port",
-        String(state.settings.httpPort),
         "--auth-token",
         state.authToken,
       ],
@@ -348,16 +344,17 @@ const startNative = async (ctx) => {
     }
     state.ready = true;
     latestSnapshot = await ctx.nowPlaying.getSnapshot().catch(() => null);
-    await syncSnapshot().catch(() => undefined);
-    startTimers(ctx);
+    await syncSnapshot({ force: true }).catch(() => undefined);
+    startCommandLoop(ctx);
   } finally {
     nativeStarting = false;
   }
 };
 
 const stopNative = async (ctx) => {
-  stopTimers();
+  stopCommandLoop();
   state.ready = false;
+  lastNativeSync = null;
   await requestNative("/shutdown", {
     method: "POST",
     body: JSON.stringify({ command: "shutdown" }),
@@ -368,68 +365,11 @@ const stopNative = async (ctx) => {
   helperPid = 0;
 };
 
-const registerSettings = (ctx) => {
-  const Settings = ctx.vue.defineComponent({
-    name: "EchoTaskbarLyricsSettings",
-    setup() {
-      const { h } = ctx.vue;
-
-      const save = async (patch) => {
-        const previousPort = state.settings.httpPort;
-        const previousSyncIntervalMs = state.settings.syncIntervalMs;
-        state.settings = normalizeSettings({ ...state.settings, ...patch });
-        await ctx.storage.set(STORAGE_KEY, state.settings);
-        if (previousPort !== state.settings.httpPort) {
-          await stopNative(ctx);
-          await startNative(ctx);
-        } else if (
-          previousSyncIntervalMs !== state.settings.syncIntervalMs &&
-          state.ready
-        ) {
-          startTimers(ctx);
-        }
-      };
-
-      return () =>
-        h("div", { style: "display: grid; gap: 12px;" }, [
-          h("label", { style: "display: grid; gap: 6px;" }, [
-            h("span", "本地端口"),
-            h("input", {
-              type: "number",
-              min: "1024",
-              max: "65535",
-              value: String(state.settings.httpPort),
-              style:
-                "width: 100%; min-width: 0; border: 1px solid color-mix(in srgb, var(--color-text-main, #f8fafc) 14%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--surface-card-base, #111827) 86%, transparent); color: var(--color-text-main, #f8fafc); padding: 8px 10px;",
-              onChange: (event) =>
-                save({
-                  httpPort:
-                    Number(event?.target?.value) || DEFAULT_SETTINGS.httpPort,
-                }),
-            }),
-          ]),
-        ]);
-    },
-  });
-
-  settingsDispose = ctx.ui.settings.define({
-    title: "任务栏歌词",
-    description: "管理 EchoMusic 到 Windows 任务栏歌词原生程序的桥接。",
-    component: Settings,
-  });
-};
-
 export async function activate(ctx) {
-  const settings = normalizeSettings(await ctx.storage.get(STORAGE_KEY));
-  await ctx.storage.set(STORAGE_KEY, settings);
-
-  state = ctx.vue.reactive({
-    settings,
+  state = {
     authToken: await getToken(ctx),
     ready: false,
-  });
-
-  registerSettings(ctx);
+  };
 
   snapshotDispose = ctx.nowPlaying.onSnapshot((snapshot) => {
     latestSnapshot = snapshot;
@@ -444,8 +384,6 @@ export async function activate(ctx) {
 export async function deactivate(ctx) {
   snapshotDispose?.();
   snapshotDispose = null;
-  settingsDispose?.();
-  settingsDispose = null;
   await stopNative(ctx);
   latestSnapshot = null;
   state = null;

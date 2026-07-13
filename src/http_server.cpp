@@ -63,8 +63,11 @@ HttpServer::~HttpServer() {
 
 void HttpServer::EnqueueControlCommand(std::string command) {
     if (command.empty()) return;
-    std::lock_guard<std::mutex> lock(outboundCommandsMutex_);
-    outboundCommands_.push_back(std::move(command));
+    {
+        std::lock_guard<std::mutex> lock(outboundCommandsMutex_);
+        outboundCommands_.push_back(std::move(command));
+    }
+    outboundCommandsCv_.notify_one();
 }
 
 bool HttpServer::Start(int port) {
@@ -87,6 +90,7 @@ bool HttpServer::Start(int port) {
 void HttpServer::Stop() {
     if (!running_.load() && !serverThread_.joinable()) return;
     stopRequested_.store(true);
+    outboundCommandsCv_.notify_all();
 
     // Poke the listening socket to wake up accept()
     if (port_ > 0) {
@@ -171,7 +175,10 @@ void HttpServer::ServerLoop(int port) {
         nlohmann::json body;
         body["commands"] = nlohmann::json::array();
         {
-            std::lock_guard<std::mutex> lock(outboundCommandsMutex_);
+            std::unique_lock<std::mutex> lock(outboundCommandsMutex_);
+            outboundCommandsCv_.wait_for(lock, std::chrono::seconds(25), [this]() {
+                return !outboundCommands_.empty() || stopRequested_.load();
+            });
             for (const auto& command : outboundCommands_) {
                 body["commands"].push_back(command);
             }

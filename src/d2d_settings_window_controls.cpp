@@ -171,7 +171,6 @@ void D2DSettingsWindow::BuildControls(const Config& cfg) {
 
     // ===== 高级 =====
     addSection("高级");
-    addLabelRow("wsPort", "WebSocket 端口", std::to_string(adv.websocketPort));
     addSlider("refreshRate", "刷新率", 15.f, 120.f, static_cast<float>(adv.refreshRateHz), " FPS");
     addToggle("debugLog", "调试日志", adv.debugLog);
 

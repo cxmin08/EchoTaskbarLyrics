@@ -42,6 +42,8 @@ struct PlayerState {
     bool        isPlaying{false};
     bool        isPersonalFM{false};    // 私人 FM 模式：上一首按钮改为不喜欢
     double      currentTime{0.0};   // 秒
+    double      duration{0.0};      // 秒
+    double      playbackRate{1.0};  // 播放倍速
     std::string songTitle;           // 可选,用于调试
     std::string coverArtUrl;         // 专辑封面 URL（可能为空）
     std::string songName;            // 歌曲名称（用于封面降级显示）

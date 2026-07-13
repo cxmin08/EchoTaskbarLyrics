@@ -12,6 +12,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <memory>
@@ -68,6 +69,7 @@ private:
     CommandCallback onCommand_;
     LyricsCallback onLyrics_;
     std::mutex outboundCommandsMutex_;
+    std::condition_variable outboundCommandsCv_;
     std::vector<std::string> outboundCommands_;
 };
 

@@ -62,7 +62,6 @@ using echo::renderer_utils::WideToUtf8;
 
 struct RuntimeOptions {
     bool echoPluginMode{false};
-    int httpPortOverride{0};
     std::string authToken;
 };
 
@@ -76,8 +75,6 @@ RuntimeOptions ParseRuntimeOptions() {
         const std::wstring arg = argv[i] ? argv[i] : L"";
         if (arg == L"--echo-plugin") {
             options.echoPluginMode = true;
-        } else if (arg == L"--http-port" && i + 1 < argc) {
-            options.httpPortOverride = std::max(0, _wtoi(argv[++i]));
         } else if (arg == L"--auth-token" && i + 1 < argc) {
             options.authToken = WideToUtf8(argv[++i]);
         }
@@ -676,7 +673,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     if (!runtimeOptions.echoPluginMode) {
         char url[64];
         std::snprintf(url, sizeof(url), "ws://127.0.0.1:%d",
-                      config.Advanced().websocketPort);
+                      echo::constants::WEBSOCKET_LISTEN_PORT);
         wsClient.Connect(url);
     }
 
@@ -711,6 +708,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             }
             if (j.contains("currentTime") && j["currentTime"].is_number()) {
                 st.currentTime = j["currentTime"].get<double>();
+            }
+            if (j.contains("duration") && j["duration"].is_number()) {
+                st.duration = j["duration"].get<double>();
+            }
+            if (j.contains("playbackRate") && j["playbackRate"].is_number()) {
+                st.playbackRate = std::max(0.1, j["playbackRate"].get<double>());
             }
 
             // 提取封面 URL（支持多种字段名）
@@ -796,12 +799,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             Log("[HTTP] Failed to parse lyrics JSON: unknown error\n");
         }
     });
-    // HTTP 端口从 config 读取（默认 6523）；异常时退回到 constants.h 中的默认值。
-    const int httpPort = runtimeOptions.httpPortOverride > 0
-                             ? runtimeOptions.httpPortOverride
-                             : ((config.Advanced().httpServerPort > 0)
-                                    ? config.Advanced().httpServerPort
-                                    : static_cast<int>(echo::constants::HTTP_SERVER_PORT));
+    // 插件桥接固定监听回环地址的内部端口，不作为用户设置暴露。
+    const int httpPort = echo::constants::HTTP_SERVER_PORT;
     if (httpServer.Start(httpPort)) {
         Log("[STARTUP] HTTP server started on port %d\n", httpPort);
     } else {
