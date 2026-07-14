@@ -7,6 +7,7 @@ const TOKEN_KEY = "authToken";
 let state = null;
 let helperPid = 0;
 let snapshotDispose = null;
+let syncTimer = 0;
 let commandLoopToken = 0;
 let lastNativeSync = null;
 let latestSnapshot = null;
@@ -289,6 +290,22 @@ const pollCommands = async (ctx) => {
   }
 };
 
+const startSyncTimer = () => {
+  if (syncTimer) window.clearInterval(syncTimer);
+  syncTimer = window.setInterval(() => {
+    // The native window can lose its topmost Z-order after Shell interactions.
+    // A periodic lyrics heartbeat lets the helper restore it promptly.
+    void syncSnapshot({ force: true }).catch((error) => {
+      console.warn("[echo-taskbar-lyrics] heartbeat sync failed", error);
+    });
+  }, 1000);
+};
+
+const stopSyncTimer = () => {
+  if (syncTimer) window.clearInterval(syncTimer);
+  syncTimer = 0;
+};
+
 const startCommandLoop = (ctx) => {
   const token = ++commandLoopToken;
   void (async () => {
@@ -345,6 +362,7 @@ const startNative = async (ctx) => {
     state.ready = true;
     latestSnapshot = await ctx.nowPlaying.getSnapshot().catch(() => null);
     await syncSnapshot({ force: true }).catch(() => undefined);
+    startSyncTimer();
     startCommandLoop(ctx);
   } finally {
     nativeStarting = false;
@@ -352,6 +370,7 @@ const startNative = async (ctx) => {
 };
 
 const stopNative = async (ctx) => {
+  stopSyncTimer();
   stopCommandLoop();
   state.ready = false;
   lastNativeSync = null;
