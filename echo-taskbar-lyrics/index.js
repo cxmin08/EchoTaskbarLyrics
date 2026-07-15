@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 
-const NATIVE_HTTP_PORT = 6523;
-const AUTH_HEADER = "X-Echo-Token";
+const NATIVE_WS_PORT = 6523;
 const TOKEN_KEY = "authToken";
 
 let state = null;
 let helperPid = 0;
 let snapshotDispose = null;
 let syncTimer = 0;
-let commandLoopToken = 0;
 let lastNativeSync = null;
 let latestSnapshot = null;
 let nativeStarting = false;
@@ -28,35 +26,21 @@ const getToken = async (ctx) => {
   return token;
 };
 
-const getBaseUrl = () => `http://127.0.0.1:${NATIVE_HTTP_PORT}`;
+const getWsUrl = () =>
+  `ws://127.0.0.1:${NATIVE_WS_PORT}/?token=${encodeURIComponent(
+    state.authToken,
+  )}`;
 
-const requestNative = async (path, options = {}) => {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
-    ...options,
-    headers: {
-      [AUTH_HEADER]: state.authToken,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return response;
-};
+const isNativeOpen = () => state?.ws?.readyState === WebSocket.OPEN;
 
-const waitForNative = async () => {
-  let lastError = null;
-  for (let i = 0; i < 30; i += 1) {
-    try {
-      await requestNative("/ping");
-      return true;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
+const sendNative = (message) => {
+  if (!isNativeOpen()) return false;
+  try {
+    state.ws.send(JSON.stringify(message));
+    return true;
+  } catch {
+    return false;
   }
-  throw lastError || new Error("native helper unavailable");
 };
 
 const getEstimatedPlaybackMs = (playback) => {
@@ -246,10 +230,8 @@ const syncSnapshot = async ({ force = false } = {}) => {
 
   if (!force && !hasMeaningfulChange) return;
 
-  await requestNative("/lyrics", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  const sent = sendNative({ type: "lyrics", data: payload });
+  if (!sent) throw new Error("native WebSocket unavailable");
   lastNativeSync = {
     signature,
     currentTime: payload.currentTime,
@@ -260,33 +242,37 @@ const syncSnapshot = async ({ force = false } = {}) => {
   };
 };
 
-const pollCommands = async (ctx) => {
-  if (!state?.ready) return;
-  try {
-    const response = await requestNative("/commands");
-    const body = await response.json();
-    const commands = Array.isArray(body?.commands) ? body.commands : [];
-    for (const command of commands) {
-      if (typeof command === "string") {
-        if (command === "dislikeFm") {
-          // 私人 FM 不喜欢优先走播放器 API：会上报垃圾歌曲并切歌。
-          if (ctx.player && typeof ctx.player.dislikePersonalFm === "function") {
-            try {
-              await ctx.player.dislikePersonalFm();
-              continue;
-            } catch {
-              // API 不可用或失败时，回退为普通下一首，至少保证按钮可跳过。
-            }
-          }
-          await ctx.nowPlaying.command("nextTrack").catch(() => undefined);
-        } else {
-          await ctx.nowPlaying.command(command).catch(() => undefined);
-        }
+const runNativeCommand = async (ctx, command) => {
+  if (typeof command !== "string") return;
+  if (command === "dislikeFm") {
+    // 私人 FM 不喜欢优先走播放器 API：会上报垃圾歌曲并切歌。
+    if (ctx.player && typeof ctx.player.dislikePersonalFm === "function") {
+      try {
+        await ctx.player.dislikePersonalFm();
+        return;
+      } catch {
+        // API 不可用或失败时，回退为普通下一首，至少保证按钮可跳过。
       }
     }
+    await ctx.nowPlaying.command("nextTrack").catch(() => undefined);
+    return;
+  }
+
+  await ctx.nowPlaying.command(command).catch(() => undefined);
+};
+
+const handleNativeMessage = (ctx, raw) => {
+  try {
+    const message = JSON.parse(raw);
+    if (message?.type === "pong") return;
+    if (message?.type !== "command") return;
+
+    const action = message.payload?.action;
+    if (typeof action === "string") {
+      void runNativeCommand(ctx, action);
+    }
   } catch {
-    // The native helper may still be starting or shutting down. Avoid a hot retry loop.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // Ignore malformed bridge messages.
   }
 };
 
@@ -306,17 +292,67 @@ const stopSyncTimer = () => {
   syncTimer = 0;
 };
 
-const startCommandLoop = (ctx) => {
-  const token = ++commandLoopToken;
-  void (async () => {
-    while (state?.ready && token === commandLoopToken) {
-      await pollCommands(ctx);
-    }
-  })();
+const closeNativeSocket = () => {
+  if (!state?.ws) return;
+  state.ws.onopen = null;
+  state.ws.onmessage = null;
+  state.ws.onclose = null;
+  state.ws.onerror = null;
+  try {
+    state.ws.close();
+  } catch {
+    // Ignore close errors during shutdown.
+  }
+  state.ws = null;
 };
 
-const stopCommandLoop = () => {
-  commandLoopToken += 1;
+const openNativeSocket = (ctx) =>
+  new Promise((resolve, reject) => {
+    const socket = new WebSocket(getWsUrl());
+    let settled = false;
+    let timer = 0;
+    const finish = (ok, error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      if (ok) resolve(socket);
+      else reject(error || new Error("native WebSocket unavailable"));
+    };
+    timer = window.setTimeout(
+      () => finish(false, new Error("native WebSocket timeout")),
+      1000,
+    );
+
+    socket.onopen = () => {
+      state.ws = socket;
+      finish(true);
+    };
+    socket.onmessage = (event) => handleNativeMessage(ctx, event.data);
+    socket.onclose = () => {
+      if (state?.ws === socket) {
+        state.ready = false;
+        state.ws = null;
+      }
+      finish(false, new Error("native WebSocket closed"));
+    };
+    socket.onerror = () => {
+      finish(false, new Error("native WebSocket error"));
+    };
+  });
+
+const connectNative = async (ctx) => {
+  let lastError = null;
+  for (let i = 0; i < 30; i += 1) {
+    try {
+      closeNativeSocket();
+      await openNativeSocket(ctx);
+      return true;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  throw lastError || new Error("native WebSocket unavailable");
 };
 
 const startNative = async (ctx) => {
@@ -352,9 +388,9 @@ const startNative = async (ctx) => {
 
     helperPid = result.pid || 0;
     try {
-      await waitForNative();
+      await connectNative(ctx);
     } catch (error) {
-      console.warn("[echo-taskbar-lyrics] native helper failed to become ready", error);
+      console.warn("[echo-taskbar-lyrics] native helper failed to accept WebSocket", error);
       ctx.toast.warning("任务栏歌词启动后未响应，请确认端口未被占用");
       await stopNative(ctx);
       return;
@@ -363,7 +399,6 @@ const startNative = async (ctx) => {
     latestSnapshot = await ctx.nowPlaying.getSnapshot().catch(() => null);
     await syncSnapshot({ force: true }).catch(() => undefined);
     startSyncTimer();
-    startCommandLoop(ctx);
   } finally {
     nativeStarting = false;
   }
@@ -371,13 +406,10 @@ const startNative = async (ctx) => {
 
 const stopNative = async (ctx) => {
   stopSyncTimer();
-  stopCommandLoop();
-  state.ready = false;
+  if (state) state.ready = false;
   lastNativeSync = null;
-  await requestNative("/shutdown", {
-    method: "POST",
-    body: JSON.stringify({ command: "shutdown" }),
-  }).catch(() => undefined);
+  sendNative({ type: "shutdown", command: "shutdown" });
+  closeNativeSocket();
   if (helperPid) {
     await ctx.process.terminate(helperPid).catch(() => undefined);
   }
@@ -388,6 +420,7 @@ export async function activate(ctx) {
   state = {
     authToken: await getToken(ctx),
     ready: false,
+    ws: null,
   };
 
   snapshotDispose = ctx.nowPlaying.onSnapshot((snapshot) => {

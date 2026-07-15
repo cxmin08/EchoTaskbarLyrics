@@ -39,14 +39,13 @@ namespace echo::constants {
 /// EchoMusic 插件模式不使用此端口；固定值避免向用户暴露无效配置。
 constexpr int WEBSOCKET_LISTEN_PORT = 6520;
 
-/// EchoMusic 插件与原生辅助程序之间的本地 HTTP 桥接端口。
-/// 仅监听 127.0.0.1，并使用 X-Echo-Token 鉴权；属于内部实现，不作为用户设置暴露。
-constexpr int HTTP_SERVER_PORT = 6523;
+/// EchoMusic 插件与原生辅助程序之间的本地 WebSocket 桥接端口。
+/// 仅监听 127.0.0.1，并使用随机 token 鉴权；属于内部实现，不作为用户设置暴露。
+constexpr int LOCAL_BRIDGE_PORT = 6523;
 
 /// HTTP / WebSocket 本地鉴权 token（shared-secret）。
-/// EchoMusic 插件入口与 EXE 内的 HTTP 服务器使用同一 token，
-/// 在 HTTP 请求头中以 X-Echo-Token: <token> 传递。
-/// 目的：阻止其他本地进程在未获 token 的情况下往 HTTP 端口发送 shutdown 等控制命令。
+/// EchoMusic 插件入口与 EXE 内的本地桥接服务使用同一 token。
+/// 目的：阻止其他本地进程在未获 token 的情况下往桥接端口发送 shutdown 等控制命令。
 ///
 /// 注意：此 token 仅为"同源弱鉴权"，不能替代 TLS / 签名；
 ///       由于两端代码都在同一台机器上，对本地 root 级攻击者无意义。
@@ -55,7 +54,7 @@ constexpr int HTTP_SERVER_PORT = 6523;
 /// 不再硬编码在二进制中。此常量已废弃，仅保留头名称。
 /// 旧常量 LOCAL_AUTH_TOKEN 已移除：参见 config.h::Config::GetAuthToken()。
 
-/// HTTP 请求中携带鉴权 token 的头名称
+/// 旧 HTTP 请求中携带鉴权 token 的头名称。
 constexpr const char* LOCAL_AUTH_HEADER_NAME = "X-Echo-Token";
 
 // ═══════════════════════════════════════

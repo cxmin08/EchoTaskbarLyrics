@@ -213,23 +213,12 @@ set_target_properties(nlohmann_json::nlohmann_json PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${NLOHMANN_JSON_INCLUDE_DIR}")
 message(STATUS "Found nlohmann_json: ${NLOHMANN_JSON_INCLUDE_DIR}")
 
-# 7. cpp-httplib（header-only，用于替代手写 HTTP 解析）
-find_path(HTTPLIB_INCLUDE_DIR httplib.h
-    PATHS "${CMAKE_SOURCE_DIR}/third_party/httplib" NO_DEFAULT_PATH)
-if(NOT HTTPLIB_INCLUDE_DIR)
-    message(FATAL_ERROR "httplib not found in third_party/httplib")
-endif()
-add_library(httplib::httplib INTERFACE IMPORTED)
-set_target_properties(httplib::httplib PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${HTTPLIB_INCLUDE_DIR}")
-message(STATUS "Found httplib: ${HTTPLIB_INCLUDE_DIR}")
-
 # 源文件
 set(SOURCES
     src/main.cpp
     src/logger.cpp
     src/websocket_client.cpp
-    src/http_server.cpp
+    src/websocket_bridge_server.cpp
     src/d2d_settings_window.cpp
     src/d2d_settings_window_controls.cpp
     src/d2d_settings_window_input.cpp
@@ -260,7 +249,7 @@ set(HEADERS
     src/logger.h
     src/lyrics_data.h
     src/websocket_client.h
-    src/http_server.h
+    src/websocket_bridge_server.h
     src/d2d_settings_window.h
     src/d2d_settings_window_internal.h
     src/color_picker.h
@@ -288,7 +277,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party
     ${NLOHMANN_JSON_INCLUDE_DIR}
     ${KISSFFT_INCLUDE_DIR}
-    ${HTTPLIB_INCLUDE_DIR}
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE /await /winrt)  # C++/WinRT 支持 (SMTC API)，仅主项目生效

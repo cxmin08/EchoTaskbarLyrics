@@ -6,7 +6,6 @@
 #include "config_dialog.h"
 #include "constants.h"
 #include "fullscreen_detector.h"
-#include "http_server.h"
 #include "logger.h"
 
 #include "d2d_settings_window.h"
@@ -18,6 +17,7 @@
 #include "spectrum_capture.h"
 #include "taskbar_window.h"
 #include "tray_icon.h"
+#include "websocket_bridge_server.h"
 #include "websocket_client.h"
 
 
@@ -47,7 +47,7 @@ struct AppContext {
     // RAII 管理的组件（按依赖顺序声明：先声明后析构）
     std::unique_ptr<echo::NativeMessagingHost> nativeHost;
     std::unique_ptr<echo::D2DSettingsWindow>   d2dSettingsWindow;
-    std::unique_ptr<echo::HttpServer>           httpServer;
+    std::unique_ptr<echo::WebSocketBridgeServer> wsBridge;
     std::unique_ptr<echo::WebSocketClient>      wsClient;
     std::unique_ptr<echo::LyricsParser>         parser;
     std::unique_ptr<echo::SpectrumCapture>      spectrumCapture;
@@ -573,7 +573,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     }
 
     // ═══════ 第 3 阶段：业务模块初始化 ═══════
-    // 目的：创建核心业务逻辑模块（任务栏窗口、渲染引擎、WebSocket、HTTP服务器）
+    // 目的：创建核心业务逻辑模块（任务栏窗口、渲染引擎、WebSocket、插件桥接服务）
     // 创建系统托盘
     app.tray = std::make_unique<echo::TrayIcon>();
     auto& tray = *app.tray;
@@ -684,20 +684,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     // 注册按钮点击回调
     taskbarWindow.OnButtonClicked([&](echo::HoverButton btn) {
         if (runtimeOptions.echoPluginMode) {
-            if (!app.httpServer) return;
+            if (!app.wsBridge) return;
             switch (btn) {
             case echo::HoverButton::Prev:
                 // 私人 FM 中左侧按钮对应“不喜欢”，普通播放仍是上一首。
-                app.httpServer->EnqueueControlCommand(
+                app.wsBridge->SendControlCommand(
                     (app.parser && app.parser->GetCurrentRenderState().isPersonalFM)
                         ? "dislikeFm"
                         : "previousTrack");
                 break;
             case echo::HoverButton::PlayPause:
-                app.httpServer->EnqueueControlCommand("togglePlayback");
+                app.wsBridge->SendControlCommand("togglePlayback");
                 break;
             case echo::HoverButton::Next:
-                app.httpServer->EnqueueControlCommand("nextTrack");
+                app.wsBridge->SendControlCommand("nextTrack");
                 break;
             default:
                 break;
@@ -739,19 +739,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
         wsClient.Connect(url);
     }
 
-    // 10.5) 启动 HTTP 服务器（用于 EchoMusic 插件桥接：ping / shutdown / lyrics）
-    app.httpServer = std::make_unique<echo::HttpServer>();
-    auto& httpServer = *app.httpServer;
-    httpServer.OnCommand([&](const std::string& command) {
-        Log("[HTTP] Command received: %s\n", command.c_str());
+    // 10.5) 启动 WebSocket bridge（用于 EchoMusic 插件桥接：lyrics / command / shutdown）
+    app.wsBridge = std::make_unique<echo::WebSocketBridgeServer>();
+    auto& wsBridge = *app.wsBridge;
+    wsBridge.OnCommand([&](const std::string& command) {
+        Log("[BRIDGE] Command received: %s\n", command.c_str());
         if (command == "shutdown") {
-            Log("[HTTP] Shutdown via HTTP, exiting...\n");
+            Log("[BRIDGE] Shutdown via WebSocket, exiting...\n");
             app.running = false;
             ::PostQuitMessage(0);
         }
     });
-    // HTTP /lyrics 端点：接收外部歌词+封面数据
-    httpServer.OnLyrics([&](const std::string& jsonBody) {
+    // WebSocket lyrics 消息：接收 EchoMusic 插件推送的歌词+封面数据
+    wsBridge.OnLyrics([&](const std::string& jsonBody) {
         try {
             nlohmann::json j = nlohmann::json::parse(jsonBody);
 
@@ -853,20 +853,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
                 }
             }
 
-            Log("[HTTP] Lyrics processed: cover='%s' song='%s'\n",
+            Log("[BRIDGE] Lyrics processed: cover='%s' song='%s'\n",
                 st.coverArtUrl.c_str(), st.songName.c_str());
         } catch (const std::exception& e) {
-            Log("[HTTP] Failed to parse lyrics JSON: %s\n", e.what());
+            Log("[BRIDGE] Failed to parse lyrics JSON: %s\n", e.what());
         } catch (...) {
-            Log("[HTTP] Failed to parse lyrics JSON: unknown error\n");
+            Log("[BRIDGE] Failed to parse lyrics JSON: unknown error\n");
         }
     });
     // 插件桥接固定监听回环地址的内部端口，不作为用户设置暴露。
-    const int httpPort = echo::constants::HTTP_SERVER_PORT;
-    if (httpServer.Start(httpPort)) {
-        Log("[STARTUP] HTTP server started on port %d\n", httpPort);
+    const int bridgePort = echo::constants::LOCAL_BRIDGE_PORT;
+    if (wsBridge.Start(bridgePort)) {
+        Log("[STARTUP] WebSocket bridge started on port %d\n", bridgePort);
     } else {
-        Log("[STARTUP] HTTP server failed to start on port %d (non-fatal)\n", httpPort);
+        Log("[STARTUP] WebSocket bridge failed to start on port %d (non-fatal)\n", bridgePort);
     }
 
     if (!runtimeOptions.echoPluginMode) {
@@ -943,7 +943,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     if (app.spectrumCapture) {
         app.spectrumCapture->Stop();
     }
-    httpServer.Stop();
+    wsBridge.Stop();
     wsClient.Disconnect();
     renderer.Shutdown();
     taskbarWindow.Destroy();
