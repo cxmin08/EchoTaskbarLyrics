@@ -242,6 +242,34 @@ const syncSnapshot = async ({ force = false } = {}) => {
   };
 };
 
+const runNowPlayingCommand = async (ctx, command) => {
+  try {
+    const result = ctx.nowPlaying?.command?.(command);
+    if (result && typeof result.then === "function") {
+      await result;
+    }
+  } catch {
+    // Ignore command failures from EchoMusic while keeping the bridge alive.
+  }
+};
+
+const getNowPlayingSnapshot = async (ctx) => {
+  try {
+    return await ctx.nowPlaying?.getSnapshot?.();
+  } catch {
+    return null;
+  }
+};
+
+const terminateHelper = async (ctx, pid) => {
+  if (!pid) return;
+  try {
+    await ctx.process?.terminate?.(pid);
+  } catch {
+    // EchoMusic may already have cleaned up plugin-owned helper processes.
+  }
+};
+
 const runNativeCommand = async (ctx, command) => {
   if (typeof command !== "string") return;
   if (command === "dislikeFm") {
@@ -254,11 +282,11 @@ const runNativeCommand = async (ctx, command) => {
         // API 不可用或失败时，回退为普通下一首，至少保证按钮可跳过。
       }
     }
-    await ctx.nowPlaying.command("nextTrack").catch(() => undefined);
+    await runNowPlayingCommand(ctx, "nextTrack");
     return;
   }
 
-  await ctx.nowPlaying.command(command).catch(() => undefined);
+  await runNowPlayingCommand(ctx, command);
 };
 
 const handleNativeMessage = (ctx, raw) => {
@@ -396,7 +424,7 @@ const startNative = async (ctx) => {
       return;
     }
     state.ready = true;
-    latestSnapshot = await ctx.nowPlaying.getSnapshot().catch(() => null);
+    latestSnapshot = await getNowPlayingSnapshot(ctx);
     await syncSnapshot({ force: true }).catch(() => undefined);
     startSyncTimer();
   } finally {
@@ -410,9 +438,7 @@ const stopNative = async (ctx) => {
   lastNativeSync = null;
   sendNative({ type: "shutdown", command: "shutdown" });
   closeNativeSocket();
-  if (helperPid) {
-    await ctx.process.terminate(helperPid).catch(() => undefined);
-  }
+  await terminateHelper(ctx, helperPid);
   helperPid = 0;
 };
 
