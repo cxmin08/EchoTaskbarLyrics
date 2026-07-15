@@ -412,17 +412,25 @@ void D2DSettingsWindow::ApplyAndSave() {
             adv.refreshRateHz = static_cast<int>(c.sliderValue);
         } else if (c.id == "debugLog") {
             adv.debugLog = c.toggleValue;
+        } else if (c.id == "fullscreenHide") {
+            adv.enableFullscreenHide = c.toggleValue;
         } else if (c.id == "autoStart") {
-            editedConfig_.SetAutoStart(c.toggleValue);
+            editedConfig_.SetAutoStartState(c.toggleValue);
         }
     }
 
-    const bool saved = editedConfig_.Save();
-
-    // 回调通知主程序
-    if (onConfigChanged_) onConfigChanged_(editedConfig_);
+    bool saved = false;
+    if (onConfigChanged_) {
+        saved = onConfigChanged_(editedConfig_);
+    } else {
+        saved = editedConfig_.Save();
+    }
 
     Log("[D2D-SETTINGS] Config applied and saved=%d\n", saved ? 1 : 0);
+    if (!saved) {
+        ::MessageBoxW(hwnd_, L"保存配置失败，设置未应用。", L"错误", MB_OK | MB_ICONERROR);
+        return;
+    }
     Close();
 }
 

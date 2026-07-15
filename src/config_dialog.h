@@ -21,9 +21,11 @@ public:
     // 显示模态配置对话框，返回 true 表示用户点了"确定"并保存了配置
     // boundMode: 是否处于绑定模式（影响是否显示"解除绑定"按钮）
     // onUnbind: 解除绑定回调（由调用者提供退出逻辑）
+    // onApply: 点击"应用"后立即通知调用者刷新运行时状态
     static bool Show(HINSTANCE hInstance, HWND parent, Config& config,
                      bool boundMode = false,
-                     std::function<void()> onUnbind = nullptr);
+                     std::function<void()> onUnbind = nullptr,
+                     std::function<void()> onApply = nullptr);
 
 private:
     static INT_PTR CALLBACK DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

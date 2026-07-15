@@ -63,9 +63,9 @@ constexpr const char* LOCAL_AUTH_HEADER_NAME = "X-Echo-Token";
 // ═══════════════════════════════════════
 
 /// 帧定时器最小间隔（毫秒）
-/// 限制原因：过快会导致过度渲染浪费 CPU；过慢会掉帧
+/// 8ms 允许 120 FPS 配置在定时器层面生效。
 /// 计算方式：MAX(MIN_FRAME_INTERVAL_MS, 1000 / 刷新率Hz)
-constexpr int MIN_FRAME_INTERVAL_MS = 15;
+constexpr int MIN_FRAME_INTERVAL_MS = 8;
 
 /// 目标帧率默认值（刷新率，单位 Hz）
 /// 推荐值：60 FPS（平衡 CPU 占用和渲染流畅度）

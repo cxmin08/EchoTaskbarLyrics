@@ -40,6 +40,8 @@ enum {
     IDC_LABEL_RATE,
     IDC_EDIT_RATE,
     IDC_SPIN_RATE,
+    IDC_CHK_DEBUG_LOG,
+    IDC_CHK_FULLSCREEN_HIDE,
     // 绑定模式
     IDC_LABEL_BOUND,
     IDC_BTN_UNBIND,
@@ -58,6 +60,11 @@ using renderer_utils::WideToUtf8;
 std::function<void()>& GetOnUnbind() {
     static std::function<void()> s_onUnbind;
     return s_onUnbind;
+}
+
+std::function<void()>& GetOnApply() {
+    static std::function<void()> s_onApply;
+    return s_onApply;
 }
 
 // 线程局部：对话框结果（OK/Apply = true）
@@ -123,7 +130,8 @@ std::wstring GetEditText(HWND hwnd, int id) {
 } // namespace
 
 bool ConfigDialog::Show(HINSTANCE hInstance, HWND parent, Config& config,
-                        bool boundMode, std::function<void()> onUnbind) {
+                        bool boundMode, std::function<void()> onUnbind,
+                        std::function<void()> onApply) {
     // 使用自定义窗口类创建模态对话框
     // 通过 DialogBoxParam 需要资源，这里用 CreateWindow 模拟模态对话框
 
@@ -148,6 +156,7 @@ bool ConfigDialog::Show(HINSTANCE hInstance, HWND parent, Config& config,
 
     // 保存 onUnbind 回调
     GetOnUnbind() = std::move(onUnbind);
+    GetOnApply() = std::move(onApply);
 
     // 重置对话框结果
     GetDialogResult() = false;
@@ -161,7 +170,11 @@ bool ConfigDialog::Show(HINSTANCE hInstance, HWND parent, Config& config,
         CW_USEDEFAULT, CW_USEDEFAULT, 440, 520,
         nullptr, nullptr, hInstance, nullptr);
 
-    if (!hwnd) return false;
+    if (!hwnd) {
+        GetOnUnbind() = nullptr;
+        GetOnApply() = nullptr;
+        return false;
+    }
 
     // 子类化窗口过程
     ::SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&DialogProc));
@@ -199,6 +212,8 @@ bool ConfigDialog::Show(HINSTANCE hInstance, HWND parent, Config& config,
 
     ::EnableWindow(parent, TRUE);
     ::SetForegroundWindow(parent);
+    GetOnUnbind() = nullptr;
+    GetOnApply() = nullptr;
 
     return GetDialogResult();
 }
@@ -264,6 +279,12 @@ void ConfigDialog::InitControls(HWND hwnd, const Config& config, bool boundMode)
     _snwprintf_s(rateBuf, _TRUNCATE, L"%d", config.Advanced().refreshRateHz);
     CreateNumEdit(hwnd, IDC_EDIT_RATE, rateBuf, left + labelW + 20 + gap, y, numW + 20, 24);
     CreateLabel(hwnd, 0, L"FPS", left + labelW + 20 + gap + numW + 24, y + 3, 30, 20);
+    y += rowH;
+
+    CreateCheckBox(hwnd, IDC_CHK_DEBUG_LOG, L"启用调试日志", left, y, 250, 22, config.Advanced().debugLog);
+    y += rowH;
+
+    CreateCheckBox(hwnd, IDC_CHK_FULLSCREEN_HIDE, L"全屏时自动隐藏歌词", left, y, 250, 22, config.Advanced().enableFullscreenHide);
     y += rowH + 8;
 
     // === 绑定模式 ===
@@ -308,6 +329,8 @@ bool ConfigDialog::ReadControls(HWND hwnd, Config& config) {
 
     auto& adv = config.MutableAdvanced();
     adv.refreshRateHz = rateStr.empty() ? adv.refreshRateHz : std::clamp(_wtoi(rateStr.c_str()), 10, 120);
+    adv.debugLog = ::IsDlgButtonChecked(hwnd, IDC_CHK_DEBUG_LOG) == BST_CHECKED;
+    adv.enableFullscreenHide = ::IsDlgButtonChecked(hwnd, IDC_CHK_FULLSCREEN_HIDE) == BST_CHECKED;
 
     return config.Save();
 }
@@ -402,8 +425,12 @@ INT_PTR CALLBACK ConfigDialog::DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LP
         }
         case IDC_BTN_APPLY: {
             if (config) {
-                ReadControls(hwnd, *config);
-                GetDialogResult() = true; // 让调用者知道需要应用设置
+                if (ReadControls(hwnd, *config)) {
+                    GetDialogResult() = true; // 让调用者知道需要应用设置
+                    if (GetOnApply()) GetOnApply();
+                } else {
+                    ::MessageBoxW(hwnd, L"保存配置失败", L"错误", MB_OK | MB_ICONERROR);
+                }
             }
             return TRUE;
         }

@@ -29,7 +29,7 @@ using ThemeColors = D2DThemeColors;
 
 class D2DSettingsWindow {
 public:
-    using ConfigChangedCallback = std::function<void(const Config&)>;
+    using ConfigChangedCallback = std::function<bool(const Config&)>;
 
     D2DSettingsWindow();
     ~D2DSettingsWindow();

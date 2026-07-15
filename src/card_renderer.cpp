@@ -348,7 +348,7 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
             if (gen != curGen) {
                 ::DeleteFileW(tempFile);
                 coverLoadInProgress_.store(false, std::memory_order_release);
-                if (debugLog_) Log("[COVER] Discard stale download (gen=%d, cur=%d)\n", gen, curGen);
+                if (debugLog_.load(std::memory_order_relaxed)) Log("[COVER] Discard stale download (gen=%d, cur=%d)\n", gen, curGen);
                 return;
             }
 
@@ -374,7 +374,7 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
             }
 
             coverLoadInProgress_.store(false, std::memory_order_release);
-            if (debugLog_) Log("[COVER] Download %s, url='%.60s'\n",
+            if (debugLog_.load(std::memory_order_relaxed)) Log("[COVER] Download %s, url='%.60s'\n",
                 SUCCEEDED(hr) ? "OK" : "FAIL", targetUrl.c_str());
         }).detach();
     }
@@ -527,11 +527,11 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
                                         if (cardBackgroundBrush_) {
                                             cardBackgroundBrush_->SetColor(coverThemeColor_);
                                         }
-                                        if (debugLog_) Log("[COVER] Theme extracted: RGB(%.2f,%.2f,%.2f) bin=%d\n",
+                                        if (debugLog_.load(std::memory_order_relaxed)) Log("[COVER] Theme extracted: RGB(%.2f,%.2f,%.2f) bin=%d\n",
                                             coverThemeColor_.r, coverThemeColor_.g, coverThemeColor_.b, bestBin);
                                     }
 
-                                    if (debugLog_) Log("[COVER] D2D bitmap via pixels: hr=0x%08X, bitmap=%d size=%ux%u\n",
+                                    if (debugLog_.load(std::memory_order_relaxed)) Log("[COVER] D2D bitmap via pixels: hr=0x%08X, bitmap=%d size=%ux%u\n",
                                         hr, d2dCoverBitmap_ ? 1 : 0, w, h);
 
                                     // ═════ P1-②: 触发封面 fade-in 动画 ═════

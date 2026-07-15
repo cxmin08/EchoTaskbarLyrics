@@ -2,6 +2,7 @@
 // logger.cpp - 统一日志系统实现
 #include "logger.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -15,7 +16,7 @@ namespace echo {
 namespace {
 
 std::string g_logPath;
-bool      g_enabled = true;   // 默认开启，InitLogger 后由 config 覆盖
+std::atomic_bool g_enabled{true}; // 默认开启，InitLogger 后由 config 覆盖
 std::mutex g_logMutex;        // 线程安全：WebSocket 线程可能同时写日志
 
 // 日志轮转：超过此大小（字节）时备份旧日志
@@ -63,11 +64,11 @@ void InitLogger() {
 }
 
 void SetLogEnabled(bool enabled) {
-    g_enabled = enabled;
+    g_enabled.store(enabled, std::memory_order_relaxed);
 }
 
 void Log(const char* fmt, ...) {
-    if (!g_enabled || g_logPath.empty()) return;
+    if (!g_enabled.load(std::memory_order_relaxed) || g_logPath.empty()) return;
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     RotateLogIfNeeded();
@@ -81,7 +82,7 @@ void Log(const char* fmt, ...) {
 }
 
 void Log(const std::string& msg) {
-    if (!g_enabled || g_logPath.empty()) return;
+    if (!g_enabled.load(std::memory_order_relaxed) || g_logPath.empty()) return;
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     RotateLogIfNeeded();

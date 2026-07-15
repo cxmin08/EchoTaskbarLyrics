@@ -240,6 +240,7 @@ void TaskbarRenderer::CreateRenderTarget() {
 
 void TaskbarRenderer::ApplySettings(const AppearanceConfig& s) {
     settings_ = s;
+    forceRedraw_ = true;
     if (initialized_) {
         textFormat_.Reset();
         translationFormat_.Reset();
@@ -510,7 +511,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
     // 卡片模式无跑马灯：无封面图时每帧重绘（确保 fallback 始终可见），
     // 有封面图后按需重绘（state 变化时才更新）
     const bool needCardRedraw = (isCardMode && !d2dCoverBitmap_);
-    if (!stateChanged && !marqueeNeedsRedraw && !needCardRedraw && !cardScrollNeedsRedraw && !kP3NeedsRedraw) {
+    if (!forceRedraw_ && !stateChanged && !marqueeNeedsRedraw && !needCardRedraw && !cardScrollNeedsRedraw && !kP3NeedsRedraw) {
         return;
     }
 
@@ -520,6 +521,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
     }
 
     lastState_ = state;
+    forceRedraw_ = false;
 
     RECT rc{};
     ::GetWindowRect(hwnd_, &rc);

@@ -107,6 +107,92 @@ void ApplyRendererSettings(AppContext& app) {
     app.renderer->ApplySettings(app.config->Appearance());
 }
 
+int CalculateFrameIntervalMs(const echo::AdvancedConfig& advanced) {
+    return std::max(MIN_FRAME_INTERVAL_MS, 1000 / std::max(1, advanced.refreshRateHz));
+}
+
+void ApplyFrameTimer(AppContext& app) {
+    if (!app.hwnd || !app.config) return;
+    const int intervalMs = CalculateFrameIntervalMs(app.config->Advanced());
+    ::KillTimer(app.hwnd, 1);
+    ::SetTimer(app.hwnd, /*id*/1, static_cast<UINT>(intervalMs), nullptr);
+}
+
+bool ApplyRuntimeSettings(AppContext& app, const echo::Config& cfg, bool saveConfig) {
+    if (!app.config) return false;
+
+    const bool oldAutoStart = app.config->IsAutoStart();
+    const bool newAutoStart = cfg.IsAutoStart();
+
+    const bool saved = !saveConfig || cfg.Save();
+    if (!saved) {
+        Log("[SETTINGS] Runtime config save failed\n");
+        return false;
+    }
+
+    if (oldAutoStart != newAutoStart) {
+        echo::Config autoStartApply = *app.config;
+        const bool autoStartOk = autoStartApply.SetAutoStart(newAutoStart);
+        Log("[SETTINGS] AutoStart runtime apply=%d value=%d\n",
+            autoStartOk ? 1 : 0, newAutoStart ? 1 : 0);
+        if (!autoStartOk) {
+            if (saveConfig) {
+                const bool rollbackSaved = app.config->Save();
+                Log("[SETTINGS] AutoStart apply failed, rollback saved=%d\n",
+                    rollbackSaved ? 1 : 0);
+            }
+            return false;
+        }
+    }
+
+    *app.config = cfg;
+
+    const bool debugLog = app.config->Advanced().debugLog;
+    echo::SetLogEnabled(debugLog);
+    if (app.renderer) {
+        app.renderer->SetDebugLog(debugLog);
+    }
+    if (app.wsClient) {
+        app.wsClient->SetDebugLog(debugLog);
+    }
+
+    ApplyRendererSettings(app);
+
+    if (app.taskbarWindow) {
+        app.taskbarWindow->SetDisplayMode(app.config->Appearance().displayMode);
+        app.taskbarWindow->SetLyricWindowWidth(app.config->Appearance().lyricWindowWidth);
+        app.taskbarWindow->SetDragOffset(
+            app.config->Position().offsetX, app.config->Position().offsetY);
+        app.taskbarWindow->SetPositionLocked(app.config->Position().lockPosition);
+        app.taskbarWindow->SetFullyLocked(app.config->Position().lockFully);
+
+        if (!app.config->Advanced().enableFullscreenHide &&
+            app.taskbarWindow->IsFullscreenHidden()) {
+            app.taskbarWindow->SetFullscreenHidden(false);
+        }
+
+        app.taskbarWindow->InvalidatePositionCache();
+        app.taskbarWindow->Reposition();
+    }
+
+    if (app.tray) {
+        app.tray->SetMenuCheckedAutoStart(app.config->IsAutoStart());
+        app.tray->SetMenuCheckedLockPos(app.config->Position().lockPosition);
+        app.tray->SetMenuCheckedLockFull(app.config->Position().lockFully);
+    }
+
+    ApplyFrameTimer(app);
+    if (app.hwnd) {
+        ::PostMessageW(app.hwnd, WM_RENDER_UPDATE, 0, 0);
+    }
+
+    Log("[SETTINGS] Runtime config applied (saved=%d, refresh=%d, debug=%d)\n",
+        saved ? 1 : 0,
+        app.config->Advanced().refreshRateHz,
+        debugLog ? 1 : 0);
+    return true;
+}
+
 // 菜单命令处理
 void OnTrayCommand(AppContext& app, UINT menuId) {
     using namespace echo;
@@ -156,29 +242,7 @@ void OnTrayCommand(AppContext& app, UINT menuId) {
         if (!app.d2dSettingsWindow) {
             app.d2dSettingsWindow = std::make_unique<echo::D2DSettingsWindow>();
             app.d2dSettingsWindow->OnConfigChanged([&](const echo::Config& cfg) {
-                *app.config = cfg;
-                app.config->Save();
-                echo::SetLogEnabled(app.config->Advanced().debugLog);
-                ApplyRendererSettings(app);
-                if (app.renderer) {
-                    app.renderer->SetDebugLog(app.config->Advanced().debugLog);
-                }
-                if (app.taskbarWindow) {
-                    app.taskbarWindow->SetDisplayMode(cfg.Appearance().displayMode);
-                    app.taskbarWindow->SetLyricWindowWidth(cfg.Appearance().lyricWindowWidth);
-                    app.taskbarWindow->SetDragOffset(
-                        cfg.Position().offsetX, cfg.Position().offsetY);
-                    app.taskbarWindow->SetPositionLocked(cfg.Position().lockPosition);
-                    app.taskbarWindow->SetFullyLocked(cfg.Position().lockFully);
-                    app.taskbarWindow->InvalidatePositionCache();
-                    app.taskbarWindow->Reposition();
-                }
-                if (app.tray) {
-                    app.tray->SetMenuCheckedAutoStart(cfg.IsAutoStart());
-                    app.tray->SetMenuCheckedLockPos(cfg.Position().lockPosition);
-                    app.tray->SetMenuCheckedLockFull(cfg.Position().lockFully);
-                }
-                Log("[SETTINGS] D2D config applied and saved\n");
+                return ApplyRuntimeSettings(app, cfg, /*saveConfig*/ true);
             });
         }
 
@@ -195,13 +259,11 @@ void OnTrayCommand(AppContext& app, UINT menuId) {
                                            // 同 ID_MENU_EXIT：ConfigDialog 的模态循环
                                            // 嵌套在 TrackPopupMenuEx 内，WM_QUIT 会被吞掉
                                            app.running = false;
+                                       },
+                                       [&app]() {
+                                           ApplyRuntimeSettings(app, *app.config, /*saveConfig*/ false);
                                        })) {
-            ApplyRendererSettings(app);
-            if (app.taskbarWindow) {
-                app.taskbarWindow->SetDragOffset(
-                    app.config->Position().offsetX, app.config->Position().offsetY);
-                app.taskbarWindow->Reposition();
-            }
+            ApplyRuntimeSettings(app, *app.config, /*saveConfig*/ false);
         }
         break;
     }
@@ -855,8 +917,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     }
 
     // 启动帧定时器
-    const int intervalMs = std::max(MIN_FRAME_INTERVAL_MS, 1000 / std::max(1, config.Advanced().refreshRateHz));
-    ::SetTimer(hMsgWnd, /*id*/1, static_cast<UINT>(intervalMs), nullptr);
+    ApplyFrameTimer(app);
 
     // ═══════ 第 4 阶段：业务逻辑循环 ═══════
     // 目的：处理消息和事件，直到应用关闭

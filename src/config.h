@@ -83,6 +83,8 @@ public:
     bool IsEnabled()    const { return enabled_; }
     bool IsAutoStart()  const { return autoStart_; }
     void SetEnabled(bool v)   { enabled_ = v; }
+    // 仅更新配置状态，不触碰系统自启项；用于设置窗口先收集配置，保存成功后再统一应用。
+    void SetAutoStartState(bool v) { autoStart_ = v; }
     // 设置并立即写注册表；返回注册表操作是否成功
     bool SetAutoStart(bool v);
 

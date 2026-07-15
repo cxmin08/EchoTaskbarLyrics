@@ -53,7 +53,7 @@ public:
     bool IsConnected() const { return connected_.load(); }
 
     // 调试日志开关（由 config.debugLog 控制）
-    void SetDebugLog(bool enabled) { debugLog_ = enabled; }
+    void SetDebugLog(bool enabled) { debugLog_.store(enabled, std::memory_order_relaxed); }
 
     // 让外部驱动重连（不阻塞）
     void RequestReconnect();
@@ -75,7 +75,7 @@ private:
 
     // 配置
     std::string url_{"ws://127.0.0.1:6520"};
-    bool        debugLog_{false};
+    std::atomic_bool debugLog_{false};
 
     // 回调
     LyricsCallback onLyrics_;

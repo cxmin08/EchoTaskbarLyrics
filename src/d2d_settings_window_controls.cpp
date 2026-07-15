@@ -173,6 +173,7 @@ void D2DSettingsWindow::BuildControls(const Config& cfg) {
     addSection("高级");
     addSlider("refreshRate", "刷新率", 15.f, 120.f, static_cast<float>(adv.refreshRateHz), " FPS");
     addToggle("debugLog", "调试日志", adv.debugLog);
+    addToggle("fullscreenHide", "全屏自动隐藏", adv.enableFullscreenHide);
 
     // ===== 通用 =====
     addSection("通用");

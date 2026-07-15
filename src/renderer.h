@@ -34,7 +34,7 @@ public:
     void Resize(UINT width, UINT height, UINT dpi);
 
     // 调试日志开关（由 config.debugLog 控制）
-    void SetDebugLog(bool enabled) { debugLog_ = enabled; }
+    void SetDebugLog(bool enabled) { debugLog_.store(enabled, std::memory_order_relaxed); }
 
     // 设置/查询垂直任务栏模式（LEFT / RIGHT 方位时启用）
     void SetVerticalTaskbar(bool vertical) { isVerticalTaskbar_ = vertical; }
@@ -115,7 +115,8 @@ private:
     UINT dpi_{96};
     bool initialized_{false};
     bool isVerticalTaskbar_{false};  // 垂直任务栏模式（LEFT/RIGHT）
-    bool debugLog_{false};           // 调试日志开关（由 config.debugLog 控制）
+    std::atomic_bool debugLog_{false}; // 调试日志开关（由 config.debugLog 控制）
+    bool forceRedraw_{false};        // 配置变更后强制下一帧重绘
 
     Microsoft::WRL::ComPtr<ID2D1Factory>              d2dFactory_;
     Microsoft::WRL::ComPtr<ID2D1RenderTarget>        renderTarget_;
