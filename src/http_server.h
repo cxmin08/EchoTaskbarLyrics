@@ -2,7 +2,7 @@
 // http_server.h - HTTP 服务器（基于 cpp-httplib 提供完整 HTTP/1.1 语义）
 //
 // 职责:
-//   - 监听指定端口（默认 6523），仅绑定 127.0.0.1
+//   - 监听调用方指定的端口，仅绑定 127.0.0.1
 //   - GET  /ping       → 返回 {"status":"ok","service":"EchoTaskbarLyrics"}
 //   - POST /lyrics     → 接收歌词+封面数据并回调
 //   - POST / /shutdown → 解析 JSON，支持 "shutdown" 命令
@@ -42,7 +42,7 @@ public:
     HttpServer& operator=(const HttpServer&) = delete;
 
     // 启动服务器（异步，返回是否成功启动）
-    bool Start(int port = 6523);
+    bool Start(int port);
 
     // 停止服务器
     void Stop();

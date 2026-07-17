@@ -39,10 +39,6 @@ namespace echo::constants {
 /// EchoMusic 插件模式不使用此端口；固定值避免向用户暴露无效配置。
 constexpr int WEBSOCKET_LISTEN_PORT = 6520;
 
-/// EchoMusic 插件与原生辅助程序之间的本地 WebSocket 桥接端口。
-/// 仅监听 127.0.0.1，并使用随机 token 鉴权；属于内部实现，不作为用户设置暴露。
-constexpr int LOCAL_BRIDGE_PORT = 6523;
-
 /// HTTP / WebSocket 本地鉴权 token（shared-secret）。
 /// EchoMusic 插件入口与 EXE 内的本地桥接服务使用同一 token。
 /// 目的：阻止其他本地进程在未获 token 的情况下往桥接端口发送 shutdown 等控制命令。

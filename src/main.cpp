@@ -63,6 +63,7 @@ using echo::renderer_utils::WideToUtf8;
 struct RuntimeOptions {
     bool echoPluginMode{false};
     std::string authToken;
+    int bridgePort{0};
 };
 
 RuntimeOptions ParseRuntimeOptions() {
@@ -77,6 +78,13 @@ RuntimeOptions ParseRuntimeOptions() {
             options.echoPluginMode = true;
         } else if (arg == L"--auth-token" && i + 1 < argc) {
             options.authToken = WideToUtf8(argv[++i]);
+        } else if (arg == L"--bridge-port" && i + 1 < argc) {
+            try {
+                const int port = std::stoi(WideToUtf8(argv[++i]));
+                if (port > 0 && port <= 65535) options.bridgePort = port;
+            } catch (...) {
+                options.bridgePort = 0;
+            }
         }
     }
 
@@ -861,12 +869,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             Log("[BRIDGE] Failed to parse lyrics JSON: unknown error\n");
         }
     });
-    // 插件桥接固定监听回环地址的内部端口，不作为用户设置暴露。
-    const int bridgePort = echo::constants::LOCAL_BRIDGE_PORT;
-    if (wsBridge.Start(bridgePort)) {
-        Log("[STARTUP] WebSocket bridge started on port %d\n", bridgePort);
-    } else {
-        Log("[STARTUP] WebSocket bridge failed to start on port %d (non-fatal)\n", bridgePort);
+    // 插件在启动时分配动态端口并通过命令行传入；服务仍仅监听回环地址。
+    if (runtimeOptions.echoPluginMode && runtimeOptions.bridgePort > 0) {
+        if (wsBridge.Start(runtimeOptions.bridgePort)) {
+            Log("[STARTUP] WebSocket bridge started on port %d\n", runtimeOptions.bridgePort);
+        } else {
+            Log("[STARTUP] WebSocket bridge failed to start on port %d (non-fatal)\n",
+                runtimeOptions.bridgePort);
+        }
+    } else if (runtimeOptions.echoPluginMode) {
+        Log("[STARTUP] WebSocket bridge disabled: missing or invalid --bridge-port\n");
     }
 
     if (!runtimeOptions.echoPluginMode) {

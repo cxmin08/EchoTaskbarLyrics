@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 
-const NATIVE_WS_PORT = 6523;
 const TOKEN_KEY = "authToken";
+const DYNAMIC_PORT_MIN = 49152;
+const DYNAMIC_PORT_MAX = 65535;
+const NATIVE_START_ATTEMPTS = 3;
 
 let state = null;
 let helperPid = 0;
@@ -18,6 +20,16 @@ const makeToken = () => {
     .slice(2)}`;
 };
 
+const makeRandomPort = () => {
+  const range = DYNAMIC_PORT_MAX - DYNAMIC_PORT_MIN + 1;
+  if (globalThis.crypto?.getRandomValues) {
+    const value = new Uint32Array(1);
+    crypto.getRandomValues(value);
+    return DYNAMIC_PORT_MIN + (value[0] % range);
+  }
+  return DYNAMIC_PORT_MIN + Math.floor(Math.random() * range);
+};
+
 const getToken = async (ctx) => {
   const saved = await ctx.storage.get(TOKEN_KEY);
   if (typeof saved === "string" && saved.length >= 16) return saved;
@@ -27,7 +39,7 @@ const getToken = async (ctx) => {
 };
 
 const getWsUrl = () =>
-  `ws://127.0.0.1:${NATIVE_WS_PORT}/?token=${encodeURIComponent(
+  `ws://127.0.0.1:${state.bridgePort}/?token=${encodeURIComponent(
     state.authToken,
   )}`;
 
@@ -338,30 +350,60 @@ const openNativeSocket = (ctx) =>
   new Promise((resolve, reject) => {
     const socket = new WebSocket(getWsUrl());
     let settled = false;
+    let opened = false;
     let timer = 0;
     const finish = (ok, error) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
       if (ok) resolve(socket);
-      else reject(error || new Error("native WebSocket unavailable"));
+      else {
+        try {
+          socket.close();
+        } catch {
+          // Ignore close errors while abandoning an unavailable endpoint.
+        }
+        reject(error || new Error("native WebSocket unavailable"));
+      }
     };
     timer = window.setTimeout(
-      () => finish(false, new Error("native WebSocket timeout")),
+      () => {
+        const error = new Error("native WebSocket timeout");
+        if (opened) error.code = "PORT_OCCUPIED";
+        finish(false, error);
+      },
       1000,
     );
 
     socket.onopen = () => {
-      state.ws = socket;
-      finish(true);
+      opened = true;
+      try {
+        socket.send(JSON.stringify({ type: "ping" }));
+      } catch (error) {
+        finish(false, error);
+      }
     };
-    socket.onmessage = (event) => handleNativeMessage(ctx, event.data);
+    socket.onmessage = (event) => {
+      if (!settled) {
+        try {
+          if (JSON.parse(event.data)?.type !== "pong") return;
+          state.ws = socket;
+          finish(true);
+        } catch {
+          return;
+        }
+      } else {
+        handleNativeMessage(ctx, event.data);
+      }
+    };
     socket.onclose = () => {
       if (state?.ws === socket) {
         state.ready = false;
         state.ws = null;
       }
-      finish(false, new Error("native WebSocket closed"));
+      const error = new Error("native WebSocket closed");
+      if (opened) error.code = "PORT_OCCUPIED";
+      finish(false, error);
     };
     socket.onerror = () => {
       finish(false, new Error("native WebSocket error"));
@@ -377,6 +419,7 @@ const connectNative = async (ctx) => {
       return true;
     } catch (error) {
       lastError = error;
+      if (error?.code === "PORT_OCCUPIED") throw error;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
@@ -397,36 +440,49 @@ const startNative = async (ctx) => {
       await stopNative(ctx);
     }
 
-    const result = await ctx.process.launch({
-      executable: "EchoTaskbarLyrics.exe",
-      args: [
-        "--echo-plugin",
-        "--auth-token",
-        state.authToken,
-      ],
-      env: {
-        ECHO_TASKBAR_LYRICS_TOKEN: state.authToken,
-      },
-    });
+    const attemptedPorts = new Set();
+    for (let attempt = 0; attempt < NATIVE_START_ATTEMPTS; attempt += 1) {
+      do {
+        state.bridgePort = makeRandomPort();
+      } while (attemptedPorts.has(state.bridgePort));
+      attemptedPorts.add(state.bridgePort);
 
-    if (!result.ok) {
-      if (!result.canceled) ctx.toast.warning(result.error || "启动任务栏歌词失败");
-      return;
-    }
+      const result = await ctx.process.launch({
+        executable: "EchoTaskbarLyrics.exe",
+        args: [
+          "--echo-plugin",
+          "--auth-token",
+          state.authToken,
+          "--bridge-port",
+          String(state.bridgePort),
+        ],
+        env: {
+          ECHO_TASKBAR_LYRICS_TOKEN: state.authToken,
+        },
+      });
 
-    helperPid = result.pid || 0;
-    try {
-      await connectNative(ctx);
-    } catch (error) {
-      console.warn("[echo-taskbar-lyrics] native helper failed to accept WebSocket", error);
-      ctx.toast.warning("任务栏歌词启动后未响应，请确认端口未被占用");
-      await stopNative(ctx);
-      return;
+      if (!result.ok) {
+        if (!result.canceled) ctx.toast.warning(result.error || "启动任务栏歌词失败");
+        return;
+      }
+
+      helperPid = result.pid || 0;
+      try {
+        await connectNative(ctx);
+        state.ready = true;
+        latestSnapshot = await getNowPlayingSnapshot(ctx);
+        await syncSnapshot({ force: true }).catch(() => undefined);
+        startSyncTimer();
+        return;
+      } catch (error) {
+        console.warn(
+          `[echo-taskbar-lyrics] native helper failed on port ${state.bridgePort}`,
+          error,
+        );
+        await stopNative(ctx);
+      }
     }
-    state.ready = true;
-    latestSnapshot = await getNowPlayingSnapshot(ctx);
-    await syncSnapshot({ force: true }).catch(() => undefined);
-    startSyncTimer();
+    ctx.toast.warning("任务栏歌词启动后未响应，无法分配可用的本地通信端口");
   } finally {
     nativeStarting = false;
   }
@@ -445,6 +501,7 @@ const stopNative = async (ctx) => {
 export async function activate(ctx) {
   state = {
     authToken: await getToken(ctx),
+    bridgePort: 0,
     ready: false,
     ws: null,
   };
