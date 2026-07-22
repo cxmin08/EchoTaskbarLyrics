@@ -68,34 +68,7 @@ bool TaskbarRenderer::Initialize(HWND hwnd) {
         reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
     if (FAILED(hr)) return false;
 
-    CreateRenderTarget();
-
-    // 创建画刷（与 Resize 中逻辑一致）
-    if (renderTarget_) {
-        highlightBrush_.Reset();
-        normalBrush_.Reset();
-        translationBrush_.Reset();
-        spectrumBrush_.Reset();
-        cardCurrentBrush_.Reset();
-        cardNextBrush_.Reset();
-        cardBackgroundBrush_.Reset();
-        const D2D1_COLOR_F hi = ParseColor(settings_.highlightColor, 1.0f);
-        const D2D1_COLOR_F no = ParseColor(settings_.normalColor, static_cast<float>(settings_.normalOpacity));
-        renderTarget_->CreateSolidColorBrush(hi, highlightBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(no, normalBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            D2D1::ColorF(0.7f, 0.7f, 0.7f, 0.8f),
-            translationBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(ParseColor(settings_.highlightColor), spectrumBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            ParseColor(settings_.cardCurrentColor, 1.0f),
-            cardCurrentBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            ParseColor(settings_.cardNextColor, 1.0f),
-            cardNextBrush_.GetAddressOf());
-        coverThemeColor_ = D2D1::ColorF(0.45f, 0.45f, 0.50f, 1.0f);
-        renderTarget_->CreateSolidColorBrush(coverThemeColor_, cardBackgroundBrush_.GetAddressOf());
-    }
+    RecreateDeviceResources();
 
     const std::wstring family = Utf8ToWide(settings_.fontFamily);
     if (dwriteFactory_ && !family.empty()) {
@@ -185,25 +158,6 @@ bool TaskbarRenderer::Initialize(HWND hwnd) {
         }
     }
 
-    if (renderTarget_) {
-        const D2D1_COLOR_F hi = ParseColor(settings_.highlightColor, 1.0f);
-        const D2D1_COLOR_F no = ParseColor(settings_.normalColor, static_cast<float>(settings_.normalOpacity));
-        renderTarget_->CreateSolidColorBrush(hi, highlightBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(no, normalBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            D2D1::ColorF(0.7f, 0.7f, 0.7f, 0.8f),
-            translationBrush_.GetAddressOf());
-        // 频谱画刷（使用高亮色）
-        renderTarget_->CreateSolidColorBrush(ParseColor(settings_.highlightColor), spectrumBrush_.GetAddressOf());
-        // 卡片模式专用颜色画刷
-        renderTarget_->CreateSolidColorBrush(
-            ParseColor(settings_.cardCurrentColor, 1.0f),
-            cardCurrentBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            ParseColor(settings_.cardNextColor, 1.0f),
-            cardNextBrush_.GetAddressOf());
-    }
-
     initialized_ = (renderTarget_ != nullptr);
     return initialized_;
 }
@@ -236,6 +190,53 @@ void TaskbarRenderer::CreateRenderTarget() {
         renderTarget_->SetDpi(
             static_cast<FLOAT>(dpi_), static_cast<FLOAT>(dpi_));
     }
+}
+
+void TaskbarRenderer::RecreateDeviceResources() {
+    // 所有 Direct2D 设备资源都绑定到创建它们的 render target，必须成组重建。
+    highlightBrush_.Reset();
+    normalBrush_.Reset();
+    translationBrush_.Reset();
+    spectrumBrush_.Reset();
+    cardCurrentBrush_.Reset();
+    cardNextBrush_.Reset();
+    cardBackgroundBrush_.Reset();
+    d2dCoverBitmap_.Reset();
+    blurredCoverBg_.Reset();
+    blurredBgBrush_.Reset();
+    blurredBgBitmapW_ = 0.0f;
+    cachedCoverUrl_.clear();
+    coverLayer_.Reset();
+    coverClipGeo_.Reset();
+    cachedCoverSize_ = -1.0f;
+    ++coverDownloadGen_;
+    coverLoadInProgress_.store(false, std::memory_order_release);
+    std::vector<uint8_t> stale;
+    while (pendingCoverQueue_.try_dequeue(stale)) { }
+
+    CreateRenderTarget();
+    if (!renderTarget_) {
+        forceRedraw_ = true;
+        return;
+    }
+
+    const D2D1_COLOR_F hi = ParseColor(settings_.highlightColor, 1.0f);
+    const D2D1_COLOR_F no = ParseColor(
+        settings_.normalColor, static_cast<float>(settings_.normalOpacity));
+    renderTarget_->CreateSolidColorBrush(hi, highlightBrush_.GetAddressOf());
+    renderTarget_->CreateSolidColorBrush(no, normalBrush_.GetAddressOf());
+    renderTarget_->CreateSolidColorBrush(
+        D2D1::ColorF(0.7f, 0.7f, 0.7f, 0.8f), translationBrush_.GetAddressOf());
+    renderTarget_->CreateSolidColorBrush(
+        ParseColor(settings_.highlightColor), spectrumBrush_.GetAddressOf());
+    renderTarget_->CreateSolidColorBrush(
+        ParseColor(settings_.cardCurrentColor, 1.0f), cardCurrentBrush_.GetAddressOf());
+    renderTarget_->CreateSolidColorBrush(
+        ParseColor(settings_.cardNextColor, 1.0f), cardNextBrush_.GetAddressOf());
+    coverThemeColor_ = D2D1::ColorF(0.45f, 0.45f, 0.50f, 1.0f);
+    renderTarget_->CreateSolidColorBrush(
+        coverThemeColor_, cardBackgroundBrush_.GetAddressOf());
+    forceRedraw_ = true;
 }
 
 void TaskbarRenderer::ApplySettings(const AppearanceConfig& s) {
@@ -302,31 +303,7 @@ void TaskbarRenderer::Resize(UINT width, UINT height, UINT dpi) {
     width_  = width;
     height_ = height;
     dpi_    = dpi;
-    CreateRenderTarget();
-    if (renderTarget_) {
-        highlightBrush_.Reset();
-        normalBrush_.Reset();
-        translationBrush_.Reset();
-        spectrumBrush_.Reset();
-        cardCurrentBrush_.Reset();
-        cardNextBrush_.Reset();
-        const D2D1_COLOR_F hi = ParseColor(settings_.highlightColor, 1.0f);
-        const D2D1_COLOR_F no = ParseColor(settings_.normalColor, static_cast<float>(settings_.normalOpacity));
-        renderTarget_->CreateSolidColorBrush(hi, highlightBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(no, normalBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            D2D1::ColorF(0.7f, 0.7f, 0.7f, 0.8f),
-            translationBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(ParseColor(settings_.highlightColor), spectrumBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            ParseColor(settings_.cardCurrentColor, 1.0f),
-            cardCurrentBrush_.GetAddressOf());
-        renderTarget_->CreateSolidColorBrush(
-            ParseColor(settings_.cardNextColor, 1.0f),
-            cardNextBrush_.GetAddressOf());
-        coverThemeColor_ = D2D1::ColorF(0.45f, 0.45f, 0.50f, 1.0f);
-        renderTarget_->CreateSolidColorBrush(coverThemeColor_, cardBackgroundBrush_.GetAddressOf());
-    }
+    RecreateDeviceResources();
     // 重建按钮文字格式（高度可能变化）
     btnFormat_.Reset();
     if (dwriteFactory_) {
@@ -661,8 +638,8 @@ void TaskbarRenderer::Render(const RenderState& state) {
 
     if (SUCCEEDED(hr)) {
         PresentToLayeredWindow();
-    } else if (hr == D2DERR_RECREATE_TARGET) {
-        CreateRenderTarget();
+    } else if (hr == D2DERR_RECREATE_TARGET || hr == D2DERR_WRONG_RESOURCE_DOMAIN) {
+        RecreateDeviceResources();
     }
 }
 

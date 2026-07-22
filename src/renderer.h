@@ -42,6 +42,7 @@ public:
 
 private:
     void CreateRenderTarget();
+    void RecreateDeviceResources();
     void DrawHighlightedTextPerCharacter(const std::wstring& text,
                                           double progress,
                                           bool enableKaraoke,

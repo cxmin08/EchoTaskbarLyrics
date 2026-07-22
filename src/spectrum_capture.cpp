@@ -6,6 +6,8 @@
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
+#include <ks.h>
+#include <ksmedia.h>
 
 #include "spectrum_capture.h"
 #include "constants.h"
@@ -47,7 +49,8 @@ void ApplyHannWindow(std::vector<float>& buf) {
 }
 
 // 对数频段合并：将 FFT 幅值 bins 映射到 numBands 个对数间距频段
-std::vector<float> LogBands(const std::vector<float>& magnitudes, int numBands) {
+std::vector<float> LogBands(const std::vector<float>& magnitudes, int numBands,
+                            float sampleRate) {
     std::vector<float> bands(static_cast<size_t>(numBands), 0.0f);
     const size_t numBins = magnitudes.size();
     if (numBins == 0) return bands;
@@ -55,8 +58,7 @@ std::vector<float> LogBands(const std::vector<float>& magnitudes, int numBands) 
     // 对数映射：band 0 对应最低频，band N-1 对应最高频
     // 使用 mel-like 对数尺度
     const float minFreq = 20.0f;
-    const float maxFreq = 22000.0f;
-    const float sampleRate = 44100.0f;  // 典型值
+    const float maxFreq = (std::max)(minFreq, (std::min)(22000.0f, sampleRate * 0.5f));
     const float freqPerBin = sampleRate / static_cast<float>(FFT_SIZE);
     const float logMin = std::log10(minFreq);
     const float logMax = std::log10(maxFreq);
@@ -165,6 +167,23 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
         return;
     }
 
+    const bool isFloat = pwfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+        (pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+         pwfx->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
+         IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(pwfx)->SubFormat,
+                     KSDATAFORMAT_SUBTYPE_IEEE_FLOAT));
+    const UINT32 channelCount = pwfx->nChannels;
+    const float sampleRate = static_cast<float>(pwfx->nSamplesPerSec);
+    if (!isFloat || channelCount == 0 || sampleRate <= 0.0f) {
+        Log("[Spectrum] Unsupported mix format: tag=%u channels=%u rate=%lu\n",
+            pwfx->wFormatTag, channelCount, pwfx->nSamplesPerSec);
+        CoTaskMemFree(pwfx);
+        pAudioClient->Release();
+        CoUninitialize();
+        parent->running_ = false;
+        return;
+    }
+
     // 10ms buffer
     REFERENCE_TIME hnsBufferDuration = 100000; // 10ms in 100ns units
     hr = pAudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
@@ -222,12 +241,14 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
 
             if (pData && numFrames > 0 && !(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
                 const float* samples = reinterpret_cast<const float*>(pData);
-                const UINT32 totalSamples = numFrames * 2; // stereo interleaved
-
                 std::lock_guard<std::mutex> lock(ringMutex);
-                for (UINT32 i = 0; i < totalSamples; i += 2) {
-                    // 左右声道均值
-                    float mono = (samples[i] + samples[i + 1]) * 0.5f;
+                for (UINT32 frame = 0; frame < numFrames; ++frame) {
+                    const UINT32 frameOffset = frame * channelCount;
+                    float mono = 0.0f;
+                    for (UINT32 channel = 0; channel < channelCount; ++channel) {
+                        mono += samples[frameOffset + channel];
+                    }
+                    mono /= static_cast<float>(channelCount);
                     ringBuffer[ringWritePos] = mono;
                     ringWritePos = (ringWritePos + 1) % kRingBufferSize;
                     if (ringSamplesAvailable < kRingBufferSize) {
@@ -283,7 +304,8 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
             }
 
             // 对数频段
-            auto rawBands = LogBands(magnitudes, constants::SPECTRUM_NUM_BANDS);
+            auto rawBands = LogBands(
+                magnitudes, constants::SPECTRUM_NUM_BANDS, sampleRate);
 
             // 归一化
             float maxVal = 0.001f;

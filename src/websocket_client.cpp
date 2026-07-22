@@ -206,10 +206,6 @@ bool WebSocketClient::Connect(const std::string& url) {
     // 初始状态：未连接
     if (onStatus_) onStatus_(false);
 
-    if (!client_) {
-        client_ = std::make_unique<ix::WebSocket>();
-    }
-
     // 启动后台重连循环（幂等）
     if (!reconnectThread_.joinable()) {
         reconnectThread_ = std::thread([this] { ReconnectLoop(); });
@@ -238,22 +234,32 @@ void WebSocketClient::Disconnect() {
     }
 
     // reconnectThread 已退出后再 stop client，避免锁争用
-    if (client_) {
-        try { client_->stop(); } catch (...) {}
+    std::shared_ptr<ix::WebSocket> client;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        client = std::move(client_);
+    }
+    if (client) {
+        try { client->stop(); } catch (...) {}
     }
 
     if (connected_.exchange(false)) {
         if (onStatus_) onStatus_(false);
     }
-    client_.reset();
 }
 
 bool WebSocketClient::SendControl(const std::string& command) {
-    if (!client_ || !connected_.load()) return false;
+    std::shared_ptr<ix::WebSocket> client;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        if (!connected_.load()) return false;
+        client = client_;
+    }
+    if (!client) return false;
     json j;
     j["type"] = "control";
     j["data"] = {{"command", command}};
-    auto result = client_->send(j.dump());
+    auto result = client->send(j.dump());
     return result.success;
 }
 
@@ -266,7 +272,12 @@ void WebSocketClient::ReconnectLoop() {
     Log("ReconnectLoop started");
     while (!stopRequested_.load()) {
         // 如果已连接,持续监控（短间隔以快速响应 stopRequested_）
-        if (connected_.load() && client_) {
+        bool hasClient = false;
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            hasClient = static_cast<bool>(client_);
+        }
+        if (connected_.load() && hasClient) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
@@ -290,9 +301,10 @@ void WebSocketClient::ReconnectLoop() {
         Log("Reconnect: connecting to " + urlCopy);
 
         // 配置客户端
+        std::shared_ptr<ix::WebSocket> client;
         try {
-            client_ = std::make_unique<ix::WebSocket>();
-            client_->setUrl(urlCopy);
+            client = std::make_shared<ix::WebSocket>();
+            client->setUrl(urlCopy);
         } catch (...) {
             Log("Reconnect: exception creating WebSocket");
             continue;
@@ -300,7 +312,7 @@ void WebSocketClient::ReconnectLoop() {
 
         // 绑定消息回调
         auto self = this;
-        client_->setOnMessageCallback(
+        client->setOnMessageCallback(
             [self](const ix::WebSocketMessagePtr& msg) {
                 if (msg->type == ix::WebSocketMessageType::Open) {
                     Log("WS: opened");
@@ -328,7 +340,11 @@ void WebSocketClient::ReconnectLoop() {
             });
 
         // 启动（同步）—— ix::WebSocket::start 内部会启动线程
-        client_->start();
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            client_ = client;
+        }
+        client->start();
 
         // 等到连接成功 / 失败 / 停止
         for (int i = 0; i < constants::WS_CONNECT_TIMEOUT_ITERATIONS && !stopRequested_.load(); ++i) { // 5s 连接窗口
@@ -340,8 +356,9 @@ void WebSocketClient::ReconnectLoop() {
         if (!connected_.load()) {
             Log("Reconnect: connection failed after 5s");
             // 启动失败,等待下个循环重连
-            try { client_->stop(); } catch (...) {}
-            client_.reset();
+            try { client->stop(); } catch (...) {}
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            if (client_ == client) client_.reset();
 
         } else {
             Log("Reconnect: connected successfully");

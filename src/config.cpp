@@ -23,22 +23,12 @@ using renderer_utils::WideToUtf8;
 
 namespace {
 
-// ── 验证路径安全性：防止命令注入 ──
-// 检查路径中是否包含可能被 shell 解释的危险字符
-static bool IsPathSafe(const std::wstring& path) {
+// 注册表、IShellLink 和 CreateProcessW 都不经命令解释器，合法文件名中的
+// 括号、感叹号等字符无需拒绝；这里只确认目标确实是一个文件。
+static bool IsExistingFile(const std::wstring& path) {
     if (path.empty()) return false;
-
-    // 危险字符：可被 cmd.exe / PowerShell 解释为命令分隔、管道、重定向等
-    static const wchar_t dangerousChars[] = L"&|;`$(){}<>!\n\r\"";
-    for (const wchar_t* p = dangerousChars; *p != L'\0'; ++p) {
-        if (path.find(*p) != std::wstring::npos) {
-            echo::Log("[AUTOSTART] Path contains dangerous char: 0x%04X\n", (unsigned int)*p);
-            return false;
-        }
-    }
-
-    // 路径必须指向实际存在的文件
-    if (::GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    const DWORD attrs = ::GetFileAttributesW(path.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
         echo::Log("[AUTOSTART] Path does not exist: %s\n", WideToUtf8(path).c_str());
         return false;
     }
@@ -304,9 +294,8 @@ bool Config::SetAutoStartRegistry(bool enable) {
             return false;
         }
 
-        // 验证路径安全性
-        if (!IsPathSafe(resolvedPath)) {
-            echo::Log("[AUTOSTART] Registry: path failed safety check\n");
+        if (!IsExistingFile(resolvedPath)) {
+            echo::Log("[AUTOSTART] Registry: target file is invalid\n");
             RegCloseKey(hKey);
             return false;
         }
@@ -363,14 +352,13 @@ bool Config::SetAutoStartTaskScheduler(bool enable) {
     const std::wstring resolvedPath = ResolveAutoStartExePath();
     wchar_t exePath[MAX_PATH] = {0};
     wcsncpy_s(exePath, resolvedPath.c_str(), MAX_PATH - 1);
-    if (resolvedPath.empty() || wcslen(exePath) == 0) {
+    if (enable && (resolvedPath.empty() || wcslen(exePath) == 0)) {
         echo::Log("[AUTOSTART] TaskScheduler: path empty\n");
         return false;
     }
 
-    // 验证路径安全性，防止命令注入
-    if (!IsPathSafe(resolvedPath)) {
-        echo::Log("[AUTOSTART] TaskScheduler: path failed safety check\n");
+    if (enable && !IsExistingFile(resolvedPath)) {
+        echo::Log("[AUTOSTART] TaskScheduler: target file is invalid\n");
         return false;
     }
 
@@ -396,12 +384,9 @@ bool Config::SetAutoStartTaskScheduler(bool enable) {
     }
 
     // 创建任务: /SC ONLOGON 触发，/RL LIMITED 普通权限，/F 覆盖
-    std::wstring quotedExe = L"\"";
-    quotedExe += exePath;
-    quotedExe += L"\"";
-
     std::wstring createCmd = std::wstring(L"schtasks /Create /TN \"") + kTaskName
-        + L"\" /TR " + quotedExe
+        // /TR 的参数值本身必须保留一层引号，否则任务执行含空格路径时会被截断。
+        + L"\" /TR \"\\\"" + exePath + L"\\\"\""
         + L" /SC ONLOGON /RL LIMITED /F";
 
     echo::Log("[AUTOSTART] TaskScheduler cmd: %s\n",
@@ -436,19 +421,6 @@ bool Config::SetAutoStartTaskScheduler(bool enable) {
 // 使用 IShellLink COM 接口创建快捷方式，避免 PowerShell 脚本注入风险。
 //
 bool Config::SetAutoStartStartupFolder(bool enable) {
-    const std::wstring resolvedPath = ResolveAutoStartExePath();
-    wchar_t exePath[MAX_PATH] = {0};
-    wcsncpy_s(exePath, resolvedPath.c_str(), MAX_PATH - 1);
-    if (resolvedPath.empty() || wcslen(exePath) == 0) {
-        return false;
-    }
-
-    // 验证路径安全性
-    if (!IsPathSafe(resolvedPath)) {
-        echo::Log("[AUTOSTART] StartupFolder: path failed safety check\n");
-        return false;
-    }
-
     // Startup 目录
     wchar_t startupDir[MAX_PATH] = {0};
     if (FAILED(::SHGetFolderPathW(nullptr, CSIDL_STARTUP, nullptr, 0, startupDir))) {
@@ -463,6 +435,14 @@ bool Config::SetAutoStartStartupFolder(bool enable) {
             echo::Log("[AUTOSTART] StartupFolder: lnk deleted\n");
         }
         return true;  // 不存在也视为成功
+    }
+
+    const std::wstring resolvedPath = ResolveAutoStartExePath();
+    wchar_t exePath[MAX_PATH] = {0};
+    wcsncpy_s(exePath, resolvedPath.c_str(), MAX_PATH - 1);
+    if (resolvedPath.empty() || wcslen(exePath) == 0 || !IsExistingFile(resolvedPath)) {
+        echo::Log("[AUTOSTART] StartupFolder: target file is invalid\n");
+        return false;
     }
 
     // 使用 IShellLink COM 接口创建快捷方式（替代 PowerShell，避免脚本注入）
