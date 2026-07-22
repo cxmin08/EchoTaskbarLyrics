@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -46,6 +47,7 @@ struct AppContext {
 
     // RAII 管理的组件（按依赖顺序声明：先声明后析构）
     std::unique_ptr<echo::NativeMessagingHost> nativeHost;
+    std::thread                                nativeHostThread;
     std::unique_ptr<echo::D2DSettingsWindow>   d2dSettingsWindow;
     std::unique_ptr<echo::WebSocketBridgeServer> wsBridge;
     std::unique_ptr<echo::WebSocketClient>      wsClient;
@@ -56,6 +58,15 @@ struct AppContext {
     std::unique_ptr<echo::TrayIcon>             tray;
     std::unique_ptr<echo::Config>               config;          // 最后声明，最先析构
 };
+
+constexpr UINT WM_AUTOSTART_APPLIED = WM_APP + 20;
+
+std::function<void(bool)> MakeAutoStartCompletion(HWND hwnd, bool enabled) {
+    return [hwnd, enabled](bool success) {
+        ::PostMessageW(hwnd, WM_AUTOSTART_APPLIED,
+                       enabled ? 1 : 0, success ? 1 : 0);
+    };
+}
 
 using namespace echo::constants;
 using echo::renderer_utils::WideToUtf8;
@@ -137,7 +148,8 @@ bool ApplyRuntimeSettings(AppContext& app, const echo::Config& cfg, bool saveCon
 
     if (oldAutoStart != newAutoStart) {
         echo::Config autoStartApply = *app.config;
-        const bool autoStartOk = autoStartApply.SetAutoStart(newAutoStart);
+        const bool autoStartOk = autoStartApply.SetAutoStart(
+            newAutoStart, MakeAutoStartCompletion(app.hwnd, newAutoStart));
         Log("[SETTINGS] AutoStart runtime apply=%d value=%d\n",
             autoStartOk ? 1 : 0, newAutoStart ? 1 : 0);
         if (!autoStartOk) {
@@ -204,7 +216,8 @@ void OnTrayCommand(AppContext& app, UINT menuId) {
     switch (menuId) {
     case ID_MENU_AUTOSTART: {
         const bool newState = !app.config->IsAutoStart();
-        const bool regOk = app.config->SetAutoStart(newState);
+        const bool regOk = app.config->SetAutoStart(
+            newState, MakeAutoStartCompletion(app.hwnd, newState));
         app.config->Save();
         if (app.tray) {
             app.tray->SetMenuCheckedAutoStart(newState);
@@ -214,7 +227,7 @@ void OnTrayCommand(AppContext& app, UINT menuId) {
         std::wstring msg;
         if (regOk) {
             if (newState) {
-                msg = L"已启用开机自启。\n\n"
+                msg = L"开机自启设置已提交，计划任务将在后台完成。\n\n"
                       L"程序会尝试以下三种方式（按顺序，自动跳过失败的）：\n"
                       L"1) 注册表 Run 键（可能被杀毒软件拦截）\n"
                       L"2) 任务计划程序（推荐）\n"
@@ -224,7 +237,7 @@ void OnTrayCommand(AppContext& app, UINT menuId) {
                       L"任务计划: schtasks /Query /TN EchoTaskbarLyrics_AutoStart\n"
                       L"启动文件夹: %APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup";
             } else {
-                msg = L"已禁用开机自启，所有方式均已清理。";
+                msg = L"关闭开机自启的请求已提交，计划任务将在后台清理。";
             }
         } else {
             msg = L"开机自启设置失败！\n\n"
@@ -342,6 +355,24 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (app->tray && app->tray->HandleSystemMessage(msg)) return 0;
 
     switch (msg) {
+    case WM_AUTOSTART_APPLIED: {
+        const bool enabled = wParam != 0;
+        const bool success = lParam != 0;
+
+        if (app->config) {
+            const bool effectiveState = success ? enabled : !enabled;
+            app->config->SetAutoStartState(effectiveState);
+            app->config->Save();
+            if (app->tray) app->tray->SetMenuCheckedAutoStart(effectiveState);
+        }
+        if (!success) {
+            ::MessageBoxW(hwnd,
+                          L"开机自启设置未能完整应用，配置已恢复。请查看 debug.log。",
+                          L"开机自启", MB_OK | MB_ICONWARNING);
+        }
+        return 0;
+    }
+
     case WM_CLOSE:
         app->running = false;
         ::PostQuitMessage(0);
@@ -749,8 +780,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
         Log("[BRIDGE] Command received: %s\n", command.c_str());
         if (command == "shutdown") {
             Log("[BRIDGE] Shutdown via WebSocket, exiting...\n");
-            app.running = false;
-            ::PostQuitMessage(0);
+            // 回调运行在 WebSocket 工作线程，向主线程窗口投递关闭请求。
+            ::PostMessageW(app.hwnd, WM_CLOSE, 0, 0);
         }
     });
     // WebSocket lyrics 消息：接收 EchoMusic 插件推送的歌词+封面数据
@@ -932,21 +963,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             }
         });
         // 在独立线程中运行 stdin 循环（阻塞式 getline）
-        std::thread stdinThread([&nativeHost, &app]() {
+        app.nativeHostThread = std::thread([&nativeHost, &app]() {
             Log("[NATIVE-HOST] Stdin reader thread started (managed=%d)\n",
                 !nativeHost.IsShutdown());
             bool result = nativeHost.Run();
             if (!result) {
                 // 收到 shutdown 指令或读取错误 → 通知主线程退出
                 Log("[NATIVE-HOST] Run() returned false, requesting shutdown\n");
-                app.running = false;
-                ::PostQuitMessage(0);
+                ::PostMessageW(app.hwnd, WM_CLOSE, 0, 0);
             } else {
                 // stdin EOF（独立运行模式，无托管者）→ 继续运行
                 Log("[NATIVE-HOST] Run() returned true (standalone mode, continuing)\n");
             }
         });
-        stdinThread.detach();
         Log("[STARTUP] Native Host stdin reader started\n");
     }
 
@@ -974,6 +1003,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     config.Save();
 
     ::KillTimer(hMsgWnd, 1);
+    if (app.nativeHostThread.joinable()) {
+        if (app.nativeHost) app.nativeHost->RequestStop();
+        // getline 可能阻塞在继承的 stdin 管道上，取消该线程的同步读取后再等待退出。
+        ::CancelSynchronousIo(app.nativeHostThread.native_handle());
+        app.nativeHostThread.join();
+    }
     if (app.spectrumCapture) {
         app.spectrumCapture->Stop();
     }

@@ -127,6 +127,7 @@ void TaskbarRenderer::RecreateDeviceResources() {
     coverClipGeo_.Reset();
     cachedCoverSize_ = -1.0f;
     if (coverDownloadCtx_) {
+        std::lock_guard<std::mutex> lock(coverDownloadCtx_->generationMutex);
         ++coverDownloadCtx_->generation;
         std::vector<uint8_t> stale;
         while (coverDownloadCtx_->pendingQueue.try_dequeue(stale)) { }
@@ -274,6 +275,7 @@ void TaskbarRenderer::Shutdown() {
     scrollOffset_ = 0.0f;
     cardMarqueeOffset_ = 0.0f;
     if (coverDownloadCtx_) {
+        std::lock_guard<std::mutex> lock(coverDownloadCtx_->generationMutex);
         coverDownloadCtx_->alive.store(false, std::memory_order_release);
         ++coverDownloadCtx_->generation;
         std::vector<uint8_t> stale;

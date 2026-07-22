@@ -8,6 +8,7 @@
 //
 #pragma once
 
+#include <functional>
 #include <string>
 
 #include "constants.h"
@@ -85,8 +86,8 @@ public:
     void SetEnabled(bool v)   { enabled_ = v; }
     // 仅更新配置状态，不触碰系统自启项；用于设置窗口先收集配置，保存成功后再统一应用。
     void SetAutoStartState(bool v) { autoStart_ = v; }
-    // 设置自启项；计划任务方案异步执行，避免阻塞 UI。
-    bool SetAutoStart(bool v);
+    // 设置自启项；计划任务方案异步执行，completion 收到三种方案的最终结果。
+    bool SetAutoStart(bool v, std::function<void(bool)> completion = {});
 
     // ---- 配置子结构 ----
     const AppearanceConfig& Appearance() const { return appearance_; }

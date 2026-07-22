@@ -11,6 +11,7 @@
 //   发出: {"type":"message","payload":{...}}   上报事件
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <cstdint>
 #include <functional>
@@ -44,6 +45,9 @@ public:
     // 返回 false 表示收到 shutdown 或读取错误，应退出程序
     bool Run();
 
+    // 请求读取循环退出；调用方还需取消阻塞中的 stdin I/O 并等待工作线程。
+    void RequestStop() { running_.store(false, std::memory_order_release); }
+
     // 向 stdout 发送事件（JSON Lines 格式，立即 flush）
     void SendEvent(const NativeHostEvent& event);
 
@@ -51,11 +55,11 @@ public:
     void SendPayloadEvent(const nlohmann::json& payload);
 
     // 是否已收到 shutdown 指令
-    bool IsShutdown() const { return !running_; }
+    bool IsShutdown() const { return !running_.load(std::memory_order_acquire); }
 
 private:
     MessageHandler handler_;
-    bool running_ = true;
+    std::atomic<bool> running_{true};
 };
 
 } // namespace echo

@@ -330,15 +330,16 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
         coverFadingIn_ = false;        // 重置 fade-in 状态，下次封面到位时重新触发
         coverFadeAlpha_ = 1.0f;
         auto downloadCtx = coverDownloadCtx_;
+        int gen = 0;
         if (downloadCtx) {
-            ++downloadCtx->generation;
+            std::lock_guard<std::mutex> lock(downloadCtx->generationMutex);
+            gen = ++downloadCtx->generation;
             // 排空无锁队列中可能残留的旧封面数据
             std::vector<uint8_t> stale;
             while (downloadCtx->pendingQueue.try_dequeue(stale)) { }
         }
 
         if (!url.empty() && downloadCtx) {
-            const int gen = downloadCtx->generation.load(std::memory_order_acquire);
             std::string targetUrl = url;
             const bool debugLog = debugLog_.load(std::memory_order_relaxed);
             std::thread([downloadCtx, targetUrl, gen, debugLog]() {
@@ -352,11 +353,14 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
             HRESULT hr = ::URLDownloadToFileW(nullptr, wUrl.c_str(), tempFile, 0, nullptr);
 
             // 上下文已失效或期间切歌时丢弃结果。
-            const int curGen = downloadCtx->generation.load(std::memory_order_acquire);
-            if (!downloadCtx->alive.load(std::memory_order_acquire) || gen != curGen) {
-                ::DeleteFileW(tempFile);
-                if (debugLog) Log("[COVER] Discard stale download (gen=%d, cur=%d)\n", gen, curGen);
-                return;
+            {
+                std::lock_guard<std::mutex> lock(downloadCtx->generationMutex);
+                const int curGen = downloadCtx->generation.load(std::memory_order_acquire);
+                if (!downloadCtx->alive.load(std::memory_order_acquire) || gen != curGen) {
+                    ::DeleteFileW(tempFile);
+                    if (debugLog) Log("[COVER] Discard stale download (gen=%d, cur=%d)\n", gen, curGen);
+                    return;
+                }
             }
 
             if (SUCCEEDED(hr)) {
@@ -370,6 +374,7 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
                         DWORD bytesRead = 0;
                         if (::ReadFile(hFile, data.data(), fileSize, &bytesRead, nullptr) && bytesRead == fileSize) {
                             // 入队前二次校验代际，避免校验与入队之间切歌造成旧封面闪现。
+                            std::lock_guard<std::mutex> lock(downloadCtx->generationMutex);
                             if (downloadCtx->alive.load(std::memory_order_acquire) &&
                                 downloadCtx->generation.load(std::memory_order_acquire) == gen) {
                                 downloadCtx->pendingQueue.enqueue(std::move(data));

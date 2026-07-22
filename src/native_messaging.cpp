@@ -28,7 +28,7 @@ void NativeMessagingHost::SetMessageHandler(MessageHandler handler) {
 bool NativeMessagingHost::Run() {
     // JSON Lines 循环：逐行读取 stdin
     std::string line;
-    while (running_ && std::getline(std::cin, line)) {
+    while (running_.load(std::memory_order_acquire) && std::getline(std::cin, line)) {
         // 跳过空行
         if (line.empty()) continue;
 
@@ -41,7 +41,7 @@ bool NativeMessagingHost::Run() {
 
             if (msg.type == "shutdown") {
                 Log("[NATIVE-HOST] Received shutdown command\n");
-                running_ = false;
+                running_.store(false, std::memory_order_release);
 
                 // 回复 shutdown 确认（让主程序知道我们收到了）
                 nlohmann::json ack;
@@ -71,7 +71,7 @@ bool NativeMessagingHost::Run() {
 
     // 其他读取错误
     Log("[NATIVE-HOST] stdin read error\n");
-    running_ = false;
+    running_.store(false, std::memory_order_release);
     return false;
 }
 

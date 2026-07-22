@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <atomic>
 
@@ -172,6 +173,7 @@ private:
         moodycamel::ConcurrentQueue<std::vector<uint8_t>> pendingQueue;
         std::atomic<int> generation{0};
         std::atomic<bool> alive{true};
+        std::mutex generationMutex;
     };
     // 下载线程只持有独立上下文，不捕获 TaskbarRenderer，退出时不会访问已析构对象。
     std::shared_ptr<CoverDownloadContext> coverDownloadCtx_;

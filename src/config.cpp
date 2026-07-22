@@ -308,7 +308,7 @@ bool Config::Save() const {
     return true;
 }
 
-bool Config::SetAutoStart(bool v) {
+bool Config::SetAutoStart(bool v, std::function<void(bool)> completion) {
     const bool changed = (autoStart_ != v);
     autoStart_ = v;
 
@@ -319,27 +319,39 @@ bool Config::SetAutoStart(bool v) {
     // schtasks 可能被安全软件阻塞十余秒，放到独立线程执行，避免卡住设置窗口。
     bool taskQueued = false;
     const uint64_t generation = ++AutoStartTaskGeneration();
+    auto completionForThread = completion;
     try {
-        std::thread([v, generation]() {
+        std::thread([v, generation, regOk, startupOk,
+                     completion = std::move(completionForThread)]() mutable {
             std::lock_guard<std::mutex> lock(AutoStartTaskMutex());
             if (generation != AutoStartTaskGeneration().load()) return;
-            const bool ok = Config::SetAutoStartTaskScheduler(v);
+            const bool taskOk = Config::SetAutoStartTaskScheduler(v);
             echo::Log("[AUTOSTART] Async TaskScheduler apply=%s value=%d\n",
-                      ok ? "ok" : "FAIL", v ? 1 : 0);
+                      taskOk ? "ok" : "FAIL", v ? 1 : 0);
+
+            // 操作期间若用户又切换了状态，只报告最后一代请求的结果。
+            if (generation != AutoStartTaskGeneration().load()) return;
+            const bool finalOk = v
+                ? (regOk || startupOk || taskOk)
+                : (regOk && startupOk && taskOk);
+            if (completion) completion(finalOk);
         }).detach();
         taskQueued = true;
     } catch (const std::exception& e) {
         echo::Log("[AUTOSTART] Failed to queue TaskScheduler update: %s\n", e.what());
+        const bool finalOk = v ? (regOk || startupOk) : false;
+        if (completion) completion(finalOk);
     }
 
-    const bool anyOk = regOk || taskQueued || startupOk;
-    echo::Log("[AUTOSTART] SetAutoStart(%s) changed=%d, reg=%s task=%s startup=%s -> overall=%s\n",
+    // 返回值表示请求是否已经由至少一种方案处理或成功排队；最终结果由 completion 回报。
+    const bool accepted = regOk || taskQueued || startupOk;
+    echo::Log("[AUTOSTART] SetAutoStart(%s) changed=%d, reg=%s task=%s startup=%s -> accepted=%s\n",
         v ? "true" : "false", (int)changed,
         regOk ? "ok" : "FAIL",
         taskQueued ? "queued" : "FAIL",
         startupOk ? "ok" : "FAIL",
-        anyOk ? "OK" : "ALL-FAIL");
-    return anyOk;
+        accepted ? "yes" : "no");
+    return accepted;
 }
 
 bool Config::SetAutoStartRegistry(bool enable) {
