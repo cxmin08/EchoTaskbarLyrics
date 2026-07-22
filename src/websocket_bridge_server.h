@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <utility>
 
@@ -19,7 +20,7 @@ namespace echo {
 class WebSocketBridgeServer {
 public:
     using CommandCallback = std::function<void(const std::string& command)>;
-    using LyricsCallback = std::function<void(const std::string& jsonBody)>;
+    using PayloadCallback = std::function<void(const nlohmann::json& payload)>;
 
     WebSocketBridgeServer();
     ~WebSocketBridgeServer();
@@ -32,9 +33,9 @@ public:
     bool IsRunning() const { return running_.load(); }
 
     void OnCommand(CommandCallback cb) { onCommand_ = std::move(cb); }
-    void OnLyrics(LyricsCallback cb) { onLyrics_ = std::move(cb); }
-    // P0-3: 轻量心跳（仅播放状态，不含歌词），回调收到 data 对象的 JSON 串
-    void OnHeartbeat(LyricsCallback cb) { onHeartbeat_ = std::move(cb); }
+    void OnLyrics(PayloadCallback cb) { onLyrics_ = std::move(cb); }
+    // P0-3: 轻量心跳（仅播放状态，不含歌词），回调直接接收已解析的 data 对象。
+    void OnHeartbeat(PayloadCallback cb) { onHeartbeat_ = std::move(cb); }
 
     bool SendControlCommand(const std::string& command);
 
@@ -46,8 +47,8 @@ private:
     std::unique_ptr<ix::WebSocketServer> server_;
     std::atomic<bool> running_{false};
     CommandCallback onCommand_;
-    LyricsCallback onLyrics_;
-    LyricsCallback onHeartbeat_;
+    PayloadCallback onLyrics_;
+    PayloadCallback onHeartbeat_;
 
     mutable std::mutex clientMutex_;
     std::weak_ptr<ix::WebSocket> activeClient_;

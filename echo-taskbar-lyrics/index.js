@@ -230,6 +230,40 @@ const normalizeLyrics = (snapshot) => {
   });
 };
 
+const lyricsEqual = (left, right) => {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+
+  for (let lineIndex = 0; lineIndex < left.length; lineIndex += 1) {
+    const a = left[lineIndex];
+    const b = right[lineIndex];
+    if (
+      a.text !== b.text ||
+      a.translated !== b.translated ||
+      a.startTime !== b.startTime ||
+      a.characters.length !== b.characters.length
+    ) {
+      return false;
+    }
+
+    for (let charIndex = 0; charIndex < a.characters.length; charIndex += 1) {
+      const ac = a.characters[charIndex];
+      const bc = b.characters[charIndex];
+      if (
+        ac.char !== bc.char ||
+        ac.startTime !== bc.startTime ||
+        ac.endTime !== bc.endTime
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+};
+
 const buildPayload = (snapshot) => {
   const playback = snapshot?.playback || {};
   const track = playback.track || playback.currentTrack || {};
@@ -272,7 +306,7 @@ const syncSnapshot = async ({ force = false } = {}) => {
   const payload = buildPayload(latestSnapshot);
   const now = Date.now();
   // P0-3: 签名只取元数据，不再对整包歌词做 JSON.stringify。
-  // lyricsBytes 用于捕捉行数不变但内容变化的情况（如翻译异步到达）。
+  // 歌词正文和逐字时间轴通过结构化比较检测，避免等长内容更新被漏掉。
   const signature = JSON.stringify({
     isPlaying: payload.isPlaying,
     isPersonalFM: payload.isPersonalFM,
@@ -282,11 +316,6 @@ const syncSnapshot = async ({ force = false } = {}) => {
     songTitle: payload.songTitle,
     coverArtUrl: payload.coverArtUrl,
     lineCount: payload.lyricsData.length,
-    lyricsBytes: payload.lyricsData.reduce(
-      (sum, line) =>
-        sum + line.text.length + (line.translated ? line.translated.length : 0),
-      0,
-    ),
   });
   const rawPredictedTime = lastNativeSync
     ? lastNativeSync.currentTime +
@@ -301,6 +330,7 @@ const syncSnapshot = async ({ force = false } = {}) => {
   const hasMeaningfulChange =
     !lastNativeSync ||
     signature !== lastNativeSync.signature ||
+    !lyricsEqual(payload.lyricsData, lastNativeSync.lyricsData) ||
     Math.abs(payload.currentTime - predictedTime) > 0.75;
 
   if (!force && !hasMeaningfulChange) return;
@@ -313,6 +343,7 @@ const syncSnapshot = async ({ force = false } = {}) => {
     isPlaying: payload.isPlaying,
     playbackRate: payload.playbackRate,
     duration: payload.duration,
+    lyricsData: payload.lyricsData,
     sentAt: now,
   };
 };

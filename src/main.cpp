@@ -754,10 +754,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
         }
     });
     // WebSocket lyrics 消息：接收 EchoMusic 插件推送的歌词+封面数据
-    wsBridge.OnLyrics([&](const std::string& jsonBody) {
+    wsBridge.OnLyrics([&](const nlohmann::json& j) {
         try {
-            nlohmann::json j = nlohmann::json::parse(jsonBody);
-
             // 提取并更新播放器状态（封面 URL、歌曲名等）
             echo::PlayerState st;
             if (j.contains("isPlaying") && j["isPlaying"].is_boolean()) {
@@ -869,9 +867,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
         }
     });
     // P0-3: 轻量心跳——阈值重同步时基 + 条件式置顶保活
-    wsBridge.OnHeartbeat([&](const std::string& jsonBody) {
+    wsBridge.OnHeartbeat([&](const nlohmann::json& j) {
         try {
-            nlohmann::json j = nlohmann::json::parse(jsonBody);
             if (app.parser) {
                 app.parser->SyncPlaybackHeartbeat(
                     j.value("isPlaying", false),
