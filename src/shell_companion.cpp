@@ -14,6 +14,29 @@
 
 namespace echo {
 
+namespace {
+
+bool IsWindowsShellEvent(HWND hwnd) {
+    if (!hwnd) return false;
+    DWORD pid = 0;
+    ::GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return false;
+    HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return false;
+    wchar_t path[MAX_PATH] = {};
+    DWORD size = MAX_PATH;
+    const bool queried = ::QueryFullProcessImageNameW(process, 0, path, &size) != FALSE;
+    ::CloseHandle(process);
+    if (!queried) return false;
+    const wchar_t* name = ::wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    return ::_wcsicmp(name, L"explorer.exe") == 0 ||
+           ::_wcsicmp(name, L"StartMenuExperienceHost.exe") == 0 ||
+           ::_wcsicmp(name, L"SearchHost.exe") == 0;
+}
+
+} // namespace
+
 // ═════════════════════════════════════════
 // 静态成员定义
 // ═════════════════════════════════════════
@@ -27,6 +50,7 @@ std::chrono::steady_clock::time_point ShellCompanion::s_shellInteractionLockedTi
 RECT            ShellCompanion::s_frozenTaskbarRect_{};
 RECT            ShellCompanion::s_lastGoodTaskbarRect_{};
 bool            ShellCompanion::s_lockedByStartMenuFg_        = false;
+bool            ShellCompanion::s_shellMenuEventActive_       = false;
 
 // ═════════════════════════════════════════
 // WinEvent 回调
@@ -48,9 +72,11 @@ void CALLBACK ShellCompanion::TaskbarWinEventProc(
 }
 
 void CALLBACK ShellCompanion::ShellMenuWinEventProc(
-    HWINEVENTHOOK, DWORD event, HWND,
+    HWINEVENTHOOK, DWORD event, HWND hWnd,
     LONG, LONG, DWORD, DWORD) {
     if (event == EVENT_SYSTEM_MENUPOPUPSTART) {
+        if (!IsWindowsShellEvent(hWnd)) return;
+        s_shellMenuEventActive_ = true;
         // 全屏隐藏时，按 Win 键呼出开始菜单应该立即恢复歌词显示。
         // 不等待防抖（全屏应用可能仍占前台 → IsForegroundFullscreen 持续为 true → 迟迟不恢复）。
         // 必须在冻结锁之前执行：冻结锁会阻止 PositionLyricsInTaskbar 定位，若先锁后恢复则窗口停在
@@ -95,6 +121,8 @@ void CALLBACK ShellCompanion::ShellMenuWinEventProc(
             }
         }
     } else if (event == EVENT_SYSTEM_MENUPOPUPEND) {
+        if (!s_shellMenuEventActive_) return;
+        s_shellMenuEventActive_ = false;
         ::OutputDebugStringW(
             L"[TaskbarLyrics] MENUPOPUPEND: scheduling unlock (300ms)\n");
         if (s_lyricsWnd_) {
@@ -183,6 +211,7 @@ void ShellCompanion::RemoveHooks() {
         s_foregroundHook_ = nullptr;
     }
     s_lockedByStartMenuFg_ = false;
+    s_shellMenuEventActive_ = false;
     s_lyricsWnd_ = nullptr;
 }
 
@@ -617,11 +646,12 @@ void ShellCompanion::SnapToEmptySpace(HWND lyricsWnd) {
 
     RECT tbRect{};
     ::GetWindowRect(hTaskbar_, &tbRect);
+    const bool vertical = info_.position == TaskbarPosition::LEFT ||
+                          info_.position == TaskbarPosition::RIGHT;
+    const int tbStart = vertical ? tbRect.top : tbRect.left;
+    const int tbEnd = vertical ? tbRect.bottom : tbRect.right;
 
-    const int myStart = (info_.position == TaskbarPosition::LEFT || info_.position == TaskbarPosition::RIGHT)
-                             ? winRect.top : winRect.left;
-    const int myEnd = myStart + ((info_.position == TaskbarPosition::LEFT || info_.position == TaskbarPosition::RIGHT)
-                                      ? winH : winW);
+    const int myStart = vertical ? winRect.top : winRect.left;
 
     constexpr int kSampleStep = 8;
 
@@ -636,9 +666,10 @@ void ShellCompanion::SnapToEmptySpace(HWND lyricsWnd) {
     struct SamplePoint { int pos; bool occupied; };
     std::vector<SamplePoint> samples;
 
-    const int sampleCount = (myEnd - myStart) / kSampleStep + 1;
+    // 对整条任务栏实际采样，不能把当前窗口范围之外未经检测的区域默认当成空闲。
+    const int sampleCount = (tbEnd - tbStart) / kSampleStep + 1;
     for (int i = 0; i < sampleCount; ++i) {
-        int pos = std::min(myStart + i * kSampleStep, myEnd - 1);
+        int pos = std::min(tbStart + i * kSampleStep, tbEnd - 1);
         POINT pt{};
 
         switch (info_.position) {
@@ -659,8 +690,11 @@ void ShellCompanion::SnapToEmptySpace(HWND lyricsWnd) {
         HWND hHit = ::WindowFromPoint(pt);
         bool isObstacle = false;
 
-        if (hHit && hHit != lyricsWnd && hHit != hTaskbar_) {
-            isObstacle = true;
+        if (hHit) {
+            const HWND hitRoot = ::GetAncestor(hHit, GA_ROOT);
+            const HWND lyricsRoot = ::GetAncestor(lyricsWnd, GA_ROOT);
+            const HWND taskbarRoot = ::GetAncestor(hTaskbar_, GA_ROOT);
+            isObstacle = hitRoot != lyricsRoot && hitRoot != taskbarRoot;
         }
 
         samples.push_back({pos, isObstacle});
@@ -715,13 +749,7 @@ void ShellCompanion::SnapToEmptySpace(HWND lyricsWnd) {
         }
     }
 
-    const int tbStart = (info_.position == TaskbarPosition::LEFT || info_.position == TaskbarPosition::RIGHT)
-                             ? tbRect.top : tbRect.left;
-    const int tbEnd = (info_.position == TaskbarPosition::LEFT || info_.position == TaskbarPosition::RIGHT)
-                           ? tbRect.bottom : tbRect.right;
-
-    const int neededSize = (info_.position == TaskbarPosition::LEFT || info_.position == TaskbarPosition::RIGHT)
-                                ? winH : winW;
+    const int neededSize = vertical ? winH : winW;
 
     int bestPos = -1;
     int bestDist = INT_MAX;

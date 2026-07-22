@@ -71,6 +71,9 @@ public:
     // 消息循环: 处理托盘回调(由主循环调用)
     void OnTrayMessage(HWND hwnd, WPARAM wParam, LPARAM lParam);
 
+    // Explorer 重启后会广播 TaskbarCreated，收到后重新注册图标。
+    bool HandleSystemMessage(UINT msg);
+
     // 加载图标(优先从 resources/icon.ico)
     HICON LoadAppIcon();
 
@@ -85,6 +88,7 @@ private:
     HMENU        hMenu_{nullptr};
     NOTIFYICONDATAW nid_{};
     bool         added_{false};
+    UINT         taskbarCreatedMsg_{0};
 
     bool checkedAutoStart_{true};
     bool checkedLockPos_{false};

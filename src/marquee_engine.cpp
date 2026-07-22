@@ -141,7 +141,9 @@ float TaskbarRenderer::UpdateMarquee(const std::string& lyricText, float progres
         if (scrollOffset_ >= marqueeMaxOffset_ && progress >= 1.0f) {
             scrollOffset_ = marqueeMaxOffset_;
             if (mode == MarqueeMode::Bounce) {
-                return marqueeMaxOffset_;
+                marqueeState_ = MarqueeState::PauseRight;
+                stateStartTime_ = now;
+                needRedraw = true;
             } else {
                 // Loop 模式：立即回到 Delay 重新开始
                 marqueeState_ = MarqueeState::Delay;

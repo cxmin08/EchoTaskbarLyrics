@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <atomic>
 
@@ -43,6 +44,7 @@ public:
 private:
     void CreateRenderTarget();
     void RecreateDeviceResources();
+    void RecreateTextResources();
     void DrawHighlightedTextPerCharacter(const std::wstring& text,
                                           double progress,
                                           bool enableKaraoke,
@@ -166,12 +168,13 @@ private:
     // 渲染线程通过 IWICStream::InitializeFromMemory 直接从内存解码，消除磁盘 I/O
     Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dCoverBitmap_;  // 渲染线程创建的 D2D 位图（与 renderTarget_ 同域）
     std::string cachedCoverUrl_;
-    // 封面数据缓冲：后台线程写入，渲染线程消费。
-    // 使用 moodycamel::ConcurrentQueue（lock-free MPMC queue）替代 mutex + shared_ptr，
-    // 消除 shared_ptr 引用计数跨线程竞争风险，且无锁设计提升生产者-消费者场景的吞吐。
-    moodycamel::ConcurrentQueue<std::vector<uint8_t>> pendingCoverQueue_;
-    std::atomic<bool> coverLoadInProgress_{false};
-    std::atomic<int> coverDownloadGen_{0};  // 代际计数器：URL 变化时递增，下载线程完成后比对以丢弃过期结果
+    struct CoverDownloadContext {
+        moodycamel::ConcurrentQueue<std::vector<uint8_t>> pendingQueue;
+        std::atomic<int> generation{0};
+        std::atomic<bool> alive{true};
+    };
+    // 下载线程只持有独立上下文，不捕获 TaskbarRenderer，退出时不会访问已析构对象。
+    std::shared_ptr<CoverDownloadContext> coverDownloadCtx_;
 
     // 封面裁剪 Layer 缓存（避免每帧 CreateLayer 导致 D2D 资源耗尽）
     Microsoft::WRL::ComPtr<ID2D1Layer>                    coverLayer_;

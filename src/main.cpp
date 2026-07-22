@@ -342,6 +342,7 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     AppContext* app = reinterpret_cast<AppContext*>(
         ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (!app) return ::DefWindowProcW(hwnd, msg, wParam, lParam);
+    if (app->tray && app->tray->HandleSystemMessage(msg)) return 0;
 
     switch (msg) {
     case WM_CLOSE:
@@ -544,7 +545,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     HWND hMsgWnd = ::CreateWindowExW(
         0, L"EchoTaskbarLyricsMsg", L"",
         0, 0, 0, 0, 0,
-        HWND_MESSAGE, nullptr, hInstance, nullptr);
+        nullptr, nullptr, hInstance, nullptr);
     if (!hMsgWnd) {
         std::fprintf(stderr, "[Error] Create message window failed\n");
         return 1;

@@ -90,6 +90,7 @@ struct SpectrumCapture::Impl {
     std::vector<float>          smoothSpectrum;
     mutable std::mutex          spectrumMutex;
     std::atomic<uint64_t>       lastFftTick{0};
+    std::atomic<bool>           threadAlive{false};
 
     static constexpr size_t kRingBufferSize = FFT_SIZE * 2;
     std::vector<float>          ringBuffer;
@@ -119,10 +120,15 @@ void SpectrumCapture::Impl::DecayOutput() {
 }
 
 void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
+    threadAlive.store(true, std::memory_order_release);
+    struct AliveGuard {
+        std::atomic<bool>& alive;
+        ~AliveGuard() { alive.store(false, std::memory_order_release); }
+    } aliveGuard{threadAlive};
+
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) {
         Log("[Spectrum] CoInitializeEx failed: 0x%08X\n", hr);
-        parent->running_ = false;
         return;
     }
 
@@ -133,7 +139,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     if (FAILED(hr) || !pEnumerator) {
         Log("[Spectrum] MMDeviceEnumerator failed: 0x%08X\n", hr);
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -143,7 +148,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     if (FAILED(hr) || !pDevice) {
         Log("[Spectrum] GetDefaultAudioEndpoint failed: 0x%08X\n", hr);
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -154,7 +158,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     if (FAILED(hr) || !pAudioClient) {
         Log("[Spectrum] Activate IAudioClient failed: 0x%08X\n", hr);
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -163,7 +166,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     if (FAILED(hr) || !pwfx) {
         pAudioClient->Release();
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -180,7 +182,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
         CoTaskMemFree(pwfx);
         pAudioClient->Release();
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -195,7 +196,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
         Log("[Spectrum] Initialize loopback failed: 0x%08X\n", hr);
         pAudioClient->Release();
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -205,7 +205,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     if (FAILED(hr) || !pCaptureClient) {
         pAudioClient->Release();
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
@@ -214,12 +213,10 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
         pCaptureClient->Release();
         pAudioClient->Release();
         CoUninitialize();
-        parent->running_ = false;
         return;
     }
 
     Log("[Spectrum] Capture started\n");
-    parent->running_ = true;
     lastFftTick.store(NowTickMs(), std::memory_order_relaxed);
 
     smoothSpectrum.clear();
@@ -238,6 +235,8 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
             DWORD flags = 0;
             hr = pCaptureClient->GetBuffer(&pData, &numFrames, &flags, nullptr, nullptr);
             if (FAILED(hr)) break;
+            // 静音包同样证明 WASAPI 采集线程健康，避免系统静音时被误判为失活。
+            lastFftTick.store(NowTickMs(), std::memory_order_relaxed);
 
             if (pData && numFrames > 0 && !(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
                 const float* samples = reinterpret_cast<const float*>(pData);
@@ -342,7 +341,6 @@ void SpectrumCapture::Impl::CaptureLoop(SpectrumCapture* parent) {
     pCaptureClient->Release();
     pAudioClient->Release();
     CoUninitialize();
-    parent->running_ = false;
     Log("[Spectrum] Capture stopped\n");
 }
 
@@ -387,7 +385,11 @@ bool SpectrumCapture::IsStale(uint64_t timeoutMs) const {
 
     const uint64_t last = impl_->lastFftTick.load(std::memory_order_relaxed);
     if (last == 0) return false;
-    return NowTickMs() - last >= timeoutMs;
+    const uint64_t elapsed = NowTickMs() - last;
+    if (!impl_->threadAlive.load(std::memory_order_acquire)) {
+        return elapsed >= 1000;
+    }
+    return elapsed >= timeoutMs;
 }
 
 void SpectrumCapture::Stop() {
@@ -395,16 +397,7 @@ void SpectrumCapture::Stop() {
     if (!impl_->captureThread) return;
 
     if (impl_->captureThread->joinable()) {
-        DWORD waitResult = ::WaitForSingleObject(
-            impl_->captureThread->native_handle(),
-            echo::constants::THREAD_JOIN_TIMEOUT_MS);
-        if (waitResult == WAIT_TIMEOUT) {
-            Log("[Spectrum] Thread join timed out (%d ms), detaching\n",
-                echo::constants::THREAD_JOIN_TIMEOUT_MS);
-            impl_->captureThread->detach();
-        } else {
-            impl_->captureThread->join();
-        }
+        impl_->captureThread->join();
     }
     impl_->captureThread.reset();
 }

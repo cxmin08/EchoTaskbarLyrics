@@ -24,7 +24,8 @@ using renderer_utils::Utf8ToWide;
 using renderer_utils::FirstUtf8CharAsWide;
 using renderer_utils::GetCurrentTimeSeconds;
 
-TaskbarRenderer::TaskbarRenderer() = default;
+TaskbarRenderer::TaskbarRenderer()
+    : coverDownloadCtx_(std::make_shared<CoverDownloadContext>()) {}
 
 TaskbarRenderer::~TaskbarRenderer() {
     Shutdown();
@@ -44,6 +45,9 @@ bool TaskbarRenderer::Initialize(HWND hwnd) {
     if (initialized_) return true;
     if (!hwnd) return false;
     hwnd_ = hwnd;
+    if (!coverDownloadCtx_) {
+        coverDownloadCtx_ = std::make_shared<CoverDownloadContext>();
+    }
 
     dpi_ = ::GetDpiForWindow(hwnd);
     RECT rc{};
@@ -69,94 +73,7 @@ bool TaskbarRenderer::Initialize(HWND hwnd) {
     if (FAILED(hr)) return false;
 
     RecreateDeviceResources();
-
-    const std::wstring family = Utf8ToWide(settings_.fontFamily);
-    if (dwriteFactory_ && !family.empty()) {
-        dwriteFactory_->CreateTextFormat(
-            family.c_str(), nullptr,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            static_cast<FLOAT>(settings_.fontSize),
-            L"zh-CN",
-            textFormat_.GetAddressOf());
-        if (textFormat_) {
-            textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            textFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-        dwriteFactory_->CreateTextFormat(
-            family.c_str(), nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            std::max<FLOAT>(8.0f, static_cast<FLOAT>(settings_.fontSize) - constants::TRANSLATION_FONT_SIZE_DELTA),
-            L"zh-CN",
-            translationFormat_.GetAddressOf());
-        if (translationFormat_) {
-            translationFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            translationFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            translationFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-        // 控制按钮图标文字格式（字体大小基于窗口高度）
-        dwriteFactory_->CreateTextFormat(
-            L"Segoe UI Symbol", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            std::max<FLOAT>(8.0f, static_cast<FLOAT>(height_) * 0.49f),
-            L"en-US",
-            btnFormat_.GetAddressOf());
-        if (btnFormat_) {
-            btnFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            btnFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
-        // 卡片模式文本格式（两行不同字号）
-        // 优先使用卡片专属字体 cardFontFamily，未设置时回落 fontFamily
-        const std::wstring cardFamily = settings_.cardFontFamily.empty()
-            ? family
-            : Utf8ToWide(settings_.cardFontFamily);
-        dwriteFactory_->CreateTextFormat(
-            cardFamily.c_str(), nullptr,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            (std::max)(8.0f, static_cast<FLOAT>(settings_.cardFontSizeCurrent)),
-            L"zh-CN",
-            cardCurrentFormat_.GetAddressOf());
-        if (cardCurrentFormat_) {
-            cardCurrentFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            cardCurrentFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            cardCurrentFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-        dwriteFactory_->CreateTextFormat(
-            cardFamily.c_str(), nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            (std::max)(8.0f, static_cast<FLOAT>(settings_.cardFontSizeNext)),
-            L"zh-CN",
-            cardNextFormat_.GetAddressOf());
-        if (cardNextFormat_) {
-            cardNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            cardNextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            cardNextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-        // 卡片模式 fallback 格式：无封面时绘制歌名首字符，字号与封面区域匹配
-        dwriteFactory_->CreateTextFormat(
-            cardFamily.c_str(), nullptr,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            (std::max)(10.0f, static_cast<FLOAT>(height_) * 0.35f),
-            L"zh-CN",
-            cardFallbackFormat_.GetAddressOf());
-        if (cardFallbackFormat_) {
-            cardFallbackFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            cardFallbackFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            cardFallbackFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-    }
+    RecreateTextResources();
 
     initialized_ = (renderTarget_ != nullptr);
     return initialized_;
@@ -187,8 +104,8 @@ void TaskbarRenderer::CreateRenderTarget() {
         wicBitmap_.Get(), props,
         reinterpret_cast<ID2D1RenderTarget**>(renderTarget_.GetAddressOf()));
     if (SUCCEEDED(hr)) {
-        renderTarget_->SetDpi(
-            static_cast<FLOAT>(dpi_), static_cast<FLOAT>(dpi_));
+        // WIC 位图尺寸和所有布局坐标统一使用物理像素；DP 尺寸由调用方显式缩放。
+        renderTarget_->SetDpi(96.0f, 96.0f);
     }
 }
 
@@ -209,10 +126,11 @@ void TaskbarRenderer::RecreateDeviceResources() {
     coverLayer_.Reset();
     coverClipGeo_.Reset();
     cachedCoverSize_ = -1.0f;
-    ++coverDownloadGen_;
-    coverLoadInProgress_.store(false, std::memory_order_release);
-    std::vector<uint8_t> stale;
-    while (pendingCoverQueue_.try_dequeue(stale)) { }
+    if (coverDownloadCtx_) {
+        ++coverDownloadCtx_->generation;
+        std::vector<uint8_t> stale;
+        while (coverDownloadCtx_->pendingQueue.try_dequeue(stale)) { }
+    }
 
     CreateRenderTarget();
     if (!renderTarget_) {
@@ -237,6 +155,90 @@ void TaskbarRenderer::RecreateDeviceResources() {
     renderTarget_->CreateSolidColorBrush(
         coverThemeColor_, cardBackgroundBrush_.GetAddressOf());
     forceRedraw_ = true;
+}
+
+void TaskbarRenderer::RecreateTextResources() {
+    textFormat_.Reset();
+    translationFormat_.Reset();
+    btnFormat_.Reset();
+    cardCurrentFormat_.Reset();
+    cardNextFormat_.Reset();
+    cardFallbackFormat_.Reset();
+    cachedLayout_.Reset();
+    cachedKaraokeText_.clear();
+    marqueeLastMeasureFormat_ = nullptr;
+
+    const std::wstring family = Utf8ToWide(settings_.fontFamily);
+    if (!dwriteFactory_ || family.empty()) return;
+    const FLOAT scale = static_cast<FLOAT>(dpi_) / 96.0f;
+
+    dwriteFactory_->CreateTextFormat(
+        family.c_str(), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        static_cast<FLOAT>(settings_.fontSize) * scale,
+        L"zh-CN", textFormat_.GetAddressOf());
+    if (textFormat_) {
+        textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        textFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    dwriteFactory_->CreateTextFormat(
+        family.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        std::max<FLOAT>(8.0f, static_cast<FLOAT>(settings_.fontSize) -
+            constants::TRANSLATION_FONT_SIZE_DELTA) * scale,
+        L"zh-CN", translationFormat_.GetAddressOf());
+    if (translationFormat_) {
+        translationFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        translationFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        translationFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    dwriteFactory_->CreateTextFormat(
+        L"Segoe UI Symbol", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        std::max<FLOAT>(8.0f, static_cast<FLOAT>(height_) * 0.49f),
+        L"en-US", btnFormat_.GetAddressOf());
+    if (btnFormat_) {
+        btnFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        btnFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    const std::wstring cardFamily = settings_.cardFontFamily.empty()
+        ? family : Utf8ToWide(settings_.cardFontFamily);
+    dwriteFactory_->CreateTextFormat(
+        cardFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        std::max<FLOAT>(8.0f, static_cast<FLOAT>(settings_.cardFontSizeCurrent)) * scale,
+        L"zh-CN", cardCurrentFormat_.GetAddressOf());
+    if (cardCurrentFormat_) {
+        cardCurrentFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        cardCurrentFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        cardCurrentFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    dwriteFactory_->CreateTextFormat(
+        cardFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        std::max<FLOAT>(8.0f, static_cast<FLOAT>(settings_.cardFontSizeNext)) * scale,
+        L"zh-CN", cardNextFormat_.GetAddressOf());
+    if (cardNextFormat_) {
+        cardNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        cardNextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        cardNextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    dwriteFactory_->CreateTextFormat(
+        cardFamily.c_str(), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        std::max<FLOAT>(10.0f, static_cast<FLOAT>(height_) * 0.35f),
+        L"zh-CN", cardFallbackFormat_.GetAddressOf());
+    if (cardFallbackFormat_) {
+        cardFallbackFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        cardFallbackFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        cardFallbackFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
 }
 
 void TaskbarRenderer::ApplySettings(const AppearanceConfig& s) {
@@ -271,12 +273,12 @@ void TaskbarRenderer::Shutdown() {
     marqueeState_ = MarqueeState::Idle;
     scrollOffset_ = 0.0f;
     cardMarqueeOffset_ = 0.0f;
-    coverLoadInProgress_.store(false, std::memory_order_release);
-    coverDownloadGen_.store(0, std::memory_order_release);  // 重置代际计数器
-    {
-        // 排空无锁队列中可能残留的封面数据
+    if (coverDownloadCtx_) {
+        coverDownloadCtx_->alive.store(false, std::memory_order_release);
+        ++coverDownloadCtx_->generation;
         std::vector<uint8_t> stale;
-        while (pendingCoverQueue_.try_dequeue(stale)) { }
+        while (coverDownloadCtx_->pendingQueue.try_dequeue(stale)) { }
+        coverDownloadCtx_.reset();
     }
     coverLayer_.Reset();
     coverClipGeo_.Reset();
@@ -304,22 +306,7 @@ void TaskbarRenderer::Resize(UINT width, UINT height, UINT dpi) {
     height_ = height;
     dpi_    = dpi;
     RecreateDeviceResources();
-    // 重建按钮文字格式（高度可能变化）
-    btnFormat_.Reset();
-    if (dwriteFactory_) {
-        dwriteFactory_->CreateTextFormat(
-            L"Segoe UI Symbol", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            std::max<FLOAT>(8.0f, static_cast<FLOAT>(height_) * 0.49f),
-            L"en-US",
-            btnFormat_.GetAddressOf());
-        if (btnFormat_) {
-            btnFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            btnFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
-    }
+    RecreateTextResources();
 }
 
 void TaskbarRenderer::PresentToLayeredWindow() {

@@ -63,6 +63,7 @@ void TaskbarEmbedder::SetFullscreenHidden(bool hidden) {
     if (!hwnd_) return;
 
     if (hidden) {
+        ::GetWindowRect(hwnd_, &preFullscreenRect_);
         // 双重保险：移到屏幕外 + SWP_HIDEWINDOW。
         // ShowWindow(SW_HIDE) 会发送 WM_SHOWWINDOW，owned window 的 owner 可能拦截；
         // SWP_HIDEWINDOW 直接操作 WS_VISIBLE 位，更可靠。
@@ -70,12 +71,16 @@ void TaskbarEmbedder::SetFullscreenHidden(bool hidden) {
                        -32000, -32000, 0, 0,
                        SWP_HIDEWINDOW | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     } else {
-        // 恢复显示：HWND_TOPMOST 脱离 owned Z-order 限制（SWP_SHOWWINDOW 从 hidden 状态恢复时
-        // owned window 层级可能受限），SWP_NOMOVE 保持现有位置（调用者负责随后定位到正确坐标）。
+        // 恢复显示：HWND_TOPMOST 脱离 owned Z-order 限制，并立即恢复隐藏前的位置，
+        // 避免 Shell 交互锁接管后窗口仍停留在屏幕外。
         // SWP_FRAMECHANGED 触发 WM_NCCALCSIZE 使窗口矩形重新生效。
+        const int restoreX = preFullscreenRect_.right > preFullscreenRect_.left
+            ? preFullscreenRect_.left : 0;
+        const int restoreY = preFullscreenRect_.bottom > preFullscreenRect_.top
+            ? preFullscreenRect_.top : 0;
         ::SetWindowPos(hwnd_, HWND_TOPMOST,
-                       0, 0, 0, 0,
-                       SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                       restoreX, restoreY, 0, 0,
+                       SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 }
 

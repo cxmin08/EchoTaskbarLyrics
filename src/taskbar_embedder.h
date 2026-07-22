@@ -88,6 +88,7 @@ private:
     bool          positionLocked_{false};
     bool          fullyLocked_{false};
     bool          fullscreenHidden_{false};
+    RECT          preFullscreenRect_{0, 0, 0, 0};
     int           dragOffsetX_{0};
     int           dragOffsetY_{0};
     POINT         dragStartPos_{0, 0};

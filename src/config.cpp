@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <algorithm>
+#include <mutex>
 #include <utility>
 #include <rpc.h>
 #include <shlobj.h>
@@ -77,8 +78,10 @@ using json = nlohmann::json;
 Config::Config() = default;
 
 static std::string s_authTokenOverride;
+static std::mutex s_authTokenMutex;
 
 void Config::SetAuthTokenOverride(std::string token) {
+    std::lock_guard<std::mutex> lock(s_authTokenMutex);
     s_authTokenOverride = std::move(token);
 }
 
@@ -181,7 +184,26 @@ bool Config::Load() {
             (int)appearance_.enableKaraoke, (int)appearance_.enableTranslation);
 
     } catch (const std::exception& e) {
-        echo::Log("[CONFIG] JSON parse error: %s, saving defaults\n", e.what());
+        echo::Log("[CONFIG] JSON parse error: %s, backing up and saving defaults\n", e.what());
+        in.close();
+        SYSTEMTIME now{};
+        ::GetLocalTime(&now);
+        char suffix[48] = {};
+        snprintf(suffix, sizeof(suffix), ".bak.%04u%02u%02u-%02u%02u%02u",
+                 now.wYear, now.wMonth, now.wDay,
+                 now.wHour, now.wMinute, now.wSecond);
+        const std::string backupPath = path + suffix;
+        if (!::MoveFileExA(path.c_str(), backupPath.c_str(),
+                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            echo::Log("[CONFIG] Failed to preserve corrupt config: %lu\n", GetLastError());
+            return false;
+        }
+        Config defaults;
+        enabled_ = defaults.enabled_;
+        autoStart_ = defaults.autoStart_;
+        appearance_ = defaults.appearance_;
+        advanced_ = defaults.advanced_;
+        position_ = defaults.position_;
         return Save();
     }
 
@@ -199,7 +221,8 @@ bool Config::Load() {
 
 bool Config::Save() const {
     const std::string path = GetConfigPath();
-    std::ofstream out(path, std::ios::trunc);
+    const std::string tmpPath = path + ".tmp";
+    std::ofstream out(tmpPath, std::ios::trunc);
     if (!out.is_open()) return false;
 
     json j;
@@ -244,6 +267,32 @@ bool Config::Save() const {
     };
 
     out << j.dump(2);
+    out.close();
+    if (out.fail()) {
+        ::DeleteFileA(tmpPath.c_str());
+        return false;
+    }
+
+    try {
+        std::ifstream verifyIn(tmpPath);
+        json verified;
+        verifyIn >> verified;
+        if (!verifyIn.good() && !verifyIn.eof()) {
+            ::DeleteFileA(tmpPath.c_str());
+            return false;
+        }
+    } catch (const std::exception& e) {
+        echo::Log("[CONFIG] Temp config verification failed: %s\n", e.what());
+        ::DeleteFileA(tmpPath.c_str());
+        return false;
+    }
+
+    if (!::MoveFileExA(tmpPath.c_str(), path.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        echo::Log("[CONFIG] Atomic replace failed: %lu\n", GetLastError());
+        ::DeleteFileA(tmpPath.c_str());
+        return false;
+    }
     return true;
 }
 
@@ -509,6 +558,7 @@ bool Config::SetAutoStartStartupFolder(bool enable) {
 static bool s_fallbackToken = false;
 
 std::string Config::GetAuthToken() {
+    std::lock_guard<std::mutex> lock(s_authTokenMutex);
     constexpr const wchar_t* kRegPath = L"Software\\EchoMusic\\TaskbarLyrics";
     constexpr const wchar_t* kValueName = L"authToken";
 
@@ -539,9 +589,9 @@ std::string Config::GetAuthToken() {
         lr = ::RegGetValueW(hKey, nullptr, kValueName, RRF_RT_REG_SZ, &type, buffer, &size);
         ::RegCloseKey(hKey);
         if (lr == ERROR_SUCCESS && size > 2) {
-            std::string token = WideToUtf8(buffer);
+            s_cachedToken = WideToUtf8(buffer);
             Log("[AUTH] Token loaded from registry\n");
-            return token;
+            return s_cachedToken;
         }
     }
 
@@ -606,6 +656,7 @@ std::string Config::GetAuthToken() {
 bool Config::IsUsingFallbackToken() {
     // 触发 GetAuthToken() 以初始化 s_fallbackToken
     GetAuthToken();
+    std::lock_guard<std::mutex> lock(s_authTokenMutex);
     return s_fallbackToken;
 }
 

@@ -71,6 +71,7 @@ private:
 
     // 状态
     std::atomic<bool> connected_{false};
+    std::atomic<bool> lastIsPlaying_{false};
     std::atomic<bool> stopRequested_{false};
     std::atomic<bool> reconnectNow_{false};
 

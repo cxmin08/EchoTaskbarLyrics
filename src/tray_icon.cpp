@@ -48,6 +48,7 @@ bool TrayIcon::Initialize(HINSTANCE hInstance, HWND messageWnd, UINT callbackMsg
     hInstance_   = hInstance;
     messageWnd_  = messageWnd;
     callbackMsg_ = callbackMsg ? callbackMsg : (WM_USER + 0x200);
+    taskbarCreatedMsg_ = ::RegisterWindowMessageW(L"TaskbarCreated");
 
     RebuildMenu();
 
@@ -72,6 +73,18 @@ bool TrayIcon::Initialize(HINSTANCE hInstance, HWND messageWnd, UINT callbackMsg
         added_ = ::Shell_NotifyIconW(NIM_ADD, &nid_) != FALSE;
     }
     return added_;
+}
+
+bool TrayIcon::HandleSystemMessage(UINT msg) {
+    if (taskbarCreatedMsg_ == 0 || msg != taskbarCreatedMsg_) return false;
+
+    nid_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    added_ = ::Shell_NotifyIconW(NIM_ADD, &nid_) != FALSE;
+    if (added_) {
+        nid_.uVersion = NOTIFYICON_VERSION_4;
+        ::Shell_NotifyIconW(NIM_SETVERSION, &nid_);
+    }
+    return true;
 }
 
 void TrayIcon::Shutdown() {

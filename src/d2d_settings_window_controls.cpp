@@ -50,7 +50,8 @@ void D2DSettingsWindow::BuildControls(const Config& cfg) {
         Control c;
         c.type = CtrlType::SliderRow;
         c.id = id; c.label = label;
-        c.sliderMin = minV; c.sliderMax = maxV; c.sliderValue = val;
+        c.sliderMin = minV; c.sliderMax = maxV;
+        c.sliderValue = std::clamp(val, minV, maxV);
         c.sliderSuffix = suffix;
         controls_.push_back(c);
     };

@@ -348,6 +348,13 @@ LRESULT CALLBACK D2DSettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, 
         }
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        if (self && self->captureCtrl_) {
+            self->captureCtrl_->pressed = false;
+            self->captureCtrl_ = nullptr;
+            ::InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
     case WM_MOUSEMOVE: {
         if (self) {
             int x = GET_X_LPARAM(lParam), y = GET_Y_LPARAM(lParam);

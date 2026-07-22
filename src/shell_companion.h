@@ -128,6 +128,7 @@ private:
     static RECT s_frozenTaskbarRect_;
     static RECT s_lastGoodTaskbarRect_;
     static bool s_lockedByStartMenuFg_;
+    static bool s_shellMenuEventActive_;
 };
 
 } // namespace echo

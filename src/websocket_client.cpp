@@ -426,7 +426,8 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
             // 从歌词消息中提取当前播放时间，更新播放器状态
             if (j["data"].contains("currentTime") && onState_) {
                 PlayerState st;
-                st.isPlaying   = true;
+                st.isPlaying   = j["data"].value("isPlaying", lastIsPlaying_.load());
+                lastIsPlaying_.store(st.isPlaying);
                 st.currentTime = j["data"]["currentTime"].get<double>();
                 st.duration = j["data"].value("duration", 0.0);
                 st.playbackRate = std::max(0.1, j["data"].value("playbackRate", 1.0));
@@ -471,6 +472,7 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
                 LyricLine line;
                 line.text       = lineJson.value("text",       "");
                 line.translated = lineJson.value("translated", "");
+                line.startTime  = lineJson.value("startTime", static_cast<int64_t>(0));
 
                 if (lineJson.contains("characters") && lineJson["characters"].is_array()) {
                     for (const auto& c : lineJson["characters"]) {
@@ -496,6 +498,7 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
         if (j.contains("data") && j["data"].is_object()) {
             const auto& d = j["data"];
             st.isPlaying   = d.value("isPlaying",   false);
+            lastIsPlaying_.store(st.isPlaying);
             // 私人 FM 状态用于渲染“不喜欢”按钮，并决定左侧按钮命令。
             st.isPersonalFM = d.value("isPersonalFM", false);
             st.currentTime = d.value("currentTime", 0.0);

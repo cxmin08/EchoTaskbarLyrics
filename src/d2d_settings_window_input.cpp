@@ -156,6 +156,11 @@ void D2DSettingsWindow::OnMouseDown(int x, int y) {
         }
         break;
 
+    case CtrlType::SliderRow:
+        ::SetCapture(hwnd_);
+        OnMouseMove(x, y);
+        break;
+
     case CtrlType::ThemePresets: {
         // 计算点击了哪个预设
         float relX = static_cast<float>(x) - (hit->rect.left + kThemePresetStartOffsetX);
@@ -351,6 +356,10 @@ void D2DSettingsWindow::OnLoseFocus() {
     hoverCtrl_ = nullptr;
     hoverClose_ = false;
     hoverMin_ = false;
+    if (captureCtrl_) {
+        captureCtrl_->pressed = false;
+        captureCtrl_ = nullptr;
+    }
     ReleaseCapture();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

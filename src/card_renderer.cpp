@@ -317,38 +317,45 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
 
     // ═════ 异步下载封面图到内存（无磁盘 I/O） ═════
     // URL 变更时启动后台线程下载到 std::vector<uint8_t>，通过 atomic swap 交给渲染线程。
-    // 使用代际计数器 coverDownloadGen_ 解决切歌时旧下载未完成导致新封面被跳过的竞态：
+    // 使用下载上下文的代际计数器解决切歌时旧下载未完成导致新封面被跳过的竞态：
     // URL 变化时 gen++，下载线程完成后比对 gen——不匹配则丢弃过期结果。
-    if (!url.empty() && url != cachedCoverUrl_) {
+    if (url != cachedCoverUrl_) {
         cachedCoverUrl_ = url;
         d2dCoverBitmap_.Reset();       // 立即清除旧位图，切歌瞬间显示兜底符号
+        blurredCoverBg_.Reset();
+        blurredBgBrush_.Reset();
+        blurredBgBitmapW_ = 0.0f;
+        coverThemeColor_ = D2D1::ColorF(0.45f, 0.45f, 0.50f, 1.0f);
+        if (cardBackgroundBrush_) cardBackgroundBrush_->SetColor(coverThemeColor_);
         coverFadingIn_ = false;        // 重置 fade-in 状态，下次封面到位时重新触发
         coverFadeAlpha_ = 1.0f;
-        {
+        auto downloadCtx = coverDownloadCtx_;
+        if (downloadCtx) {
+            ++downloadCtx->generation;
             // 排空无锁队列中可能残留的旧封面数据
             std::vector<uint8_t> stale;
-            while (pendingCoverQueue_.try_dequeue(stale)) { }
+            while (downloadCtx->pendingQueue.try_dequeue(stale)) { }
         }
-        coverLoadInProgress_.store(true, std::memory_order_relaxed);
 
-        int gen = ++coverDownloadGen_;  // 递增代际，使可能还在跑的旧下载失效
-        std::string targetUrl = url;
-        std::thread([this, targetUrl, gen]() {
+        if (!url.empty() && downloadCtx) {
+            const int gen = downloadCtx->generation.load(std::memory_order_acquire);
+            std::string targetUrl = url;
+            const bool debugLog = debugLog_.load(std::memory_order_relaxed);
+            std::thread([downloadCtx, targetUrl, gen, debugLog]() {
             // 下载到临时文件，然后读入内存立即删除（避免磁盘持久化）
             wchar_t tempPath[MAX_PATH] = {0};
             ::GetTempPathW(MAX_PATH, tempPath);
             wchar_t tempFile[MAX_PATH] = {0};
             ::GetTempFileNameW(tempPath, L"mkl_", 0, tempFile);
 
-            std::wstring wUrl(targetUrl.begin(), targetUrl.end());
+            std::wstring wUrl = Utf8ToWide(targetUrl);
             HRESULT hr = ::URLDownloadToFileW(nullptr, wUrl.c_str(), tempFile, 0, nullptr);
 
-            // 代际校验：若期间又切歌（gen != coverDownloadGen_），丢弃过期下载结果
-            int curGen = coverDownloadGen_.load(std::memory_order_relaxed);
-            if (gen != curGen) {
+            // 上下文已失效或期间切歌时丢弃结果。
+            const int curGen = downloadCtx->generation.load(std::memory_order_acquire);
+            if (!downloadCtx->alive.load(std::memory_order_acquire) || gen != curGen) {
                 ::DeleteFileW(tempFile);
-                coverLoadInProgress_.store(false, std::memory_order_release);
-                if (debugLog_.load(std::memory_order_relaxed)) Log("[COVER] Discard stale download (gen=%d, cur=%d)\n", gen, curGen);
+                if (debugLog) Log("[COVER] Discard stale download (gen=%d, cur=%d)\n", gen, curGen);
                 return;
             }
 
@@ -362,8 +369,11 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
                         std::vector<uint8_t> data(fileSize);
                         DWORD bytesRead = 0;
                         if (::ReadFile(hFile, data.data(), fileSize, &bytesRead, nullptr) && bytesRead == fileSize) {
-                            // 通过无锁队列将封面数据发送给渲染线程（move 语义，零拷贝）
-                            pendingCoverQueue_.enqueue(std::move(data));
+                            // 入队前二次校验代际，避免校验与入队之间切歌造成旧封面闪现。
+                            if (downloadCtx->alive.load(std::memory_order_acquire) &&
+                                downloadCtx->generation.load(std::memory_order_acquire) == gen) {
+                                downloadCtx->pendingQueue.enqueue(std::move(data));
+                            }
                         }
                     }
                     ::CloseHandle(hFile);
@@ -373,15 +383,15 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
                 ::DeleteFileW(tempFile);
             }
 
-            coverLoadInProgress_.store(false, std::memory_order_release);
-            if (debugLog_.load(std::memory_order_relaxed)) Log("[COVER] Download %s, url='%.60s'\n",
+            if (debugLog) Log("[COVER] Download %s, url='%.60s'\n",
                 SUCCEEDED(hr) ? "OK" : "FAIL", targetUrl.c_str());
-        }).detach();
+            }).detach();
+        }
     }
 
     // ═════ 消费后台下载结果：从内存直接解码 ═════
     std::vector<uint8_t> data;
-    pendingCoverQueue_.try_dequeue(data);
+    if (coverDownloadCtx_) coverDownloadCtx_->pendingQueue.try_dequeue(data);
     if (!data.empty()) {
 
         // 通过 IWICStream::InitializeFromMemory 直接从内存解码，消除磁盘 I/O
@@ -450,8 +460,8 @@ void TaskbarRenderer::DrawCoverArt(const std::string& url, wchar_t fallbackChar,
                                     bp.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
                                     // 位图 DPI 设为 96（基准值），使像素尺寸与 DIP 1:1 对应。
                                     // 因为此处的 w/h 已是按当前 DPI 缩放后的物理像素，
-                                    // 绘制矩形的 size 也同样是物理像素值（render target DPI == 屏幕 DPI），
-                                    // 若设为 dpi_（>96）会导致 D2D 将位图解释为比实际更小的 DIPs，
+                                    // 绘制矩形的 size 也同样是物理像素值（render target 固定为 96 DPI），
+                                    // 若设为 dpi_（>96）会导致 D2D 将位图解释为比实际更小，
                                     // 造成 FillRoundedRectangle 时位图区域不足，边缘像素被 CLAMP 拉伸。
                                     bp.dpiX = 96.0f;
                                     bp.dpiY = 96.0f;
