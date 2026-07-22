@@ -154,7 +154,7 @@ void D2DSettingsWindow::DrawBottomBar(ID2D1RenderTarget* rt) {
     rt->CreateSolidColorBrush(theme_.border, &line);
     rt->DrawLine(D2D1::Point2F(0.f, y + 0.5f), D2D1::Point2F(w, y + 0.5f), line.Get());
 
-    const wchar_t* versionText = L"Echo Taskbar Lyrics v1.6.2";
+    const wchar_t* versionText = L"Echo Taskbar Lyrics v1.6.5";
     DrawTextLine(rt, hintFmt_.Get(), textSecondaryBrush_.Get(),
                  versionText, 24.f, y + 23.f, 240.f);
 }
