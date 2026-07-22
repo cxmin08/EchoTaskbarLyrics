@@ -869,6 +869,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
             Log("[BRIDGE] Failed to parse lyrics JSON: unknown error\n");
         }
     });
+    // P0-3: 轻量心跳——阈值重同步时基 + 条件式置顶保活
+    wsBridge.OnHeartbeat([&](const std::string& jsonBody) {
+        try {
+            nlohmann::json j = nlohmann::json::parse(jsonBody);
+            if (app.parser) {
+                app.parser->SyncPlaybackHeartbeat(
+                    j.value("isPlaying", false),
+                    j.value("currentTime", 0.0),
+                    j.value("playbackRate", 1.0),
+                    j.value("duration", 0.0));
+            }
+            // 仅在检测到丢失 TOPMOST 时才恢复，避免每秒无条件 SetWindowPos
+            if (app.taskbarWindow) {
+                HWND h = app.taskbarWindow->GetHandle();
+                if (h && ::IsWindowVisible(h) &&
+                    !(::GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
+                    ::SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
+                                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
+            }
+        } catch (const std::exception& e) {
+            Log("[BRIDGE] Failed to parse heartbeat JSON: %s\n", e.what());
+        } catch (...) {
+            Log("[BRIDGE] Failed to parse heartbeat JSON: unknown error\n");
+        }
+    });
     // 插件在启动时分配动态端口并通过命令行传入；服务仍仅监听回环地址。
     if (runtimeOptions.echoPluginMode && runtimeOptions.bridgePort > 0) {
         if (wsBridge.Start(runtimeOptions.bridgePort)) {

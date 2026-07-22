@@ -125,6 +125,9 @@ bool WebSocketBridgeServer::Start(int port) {
                         const std::string type = j.value("type", "");
                         if (type == "lyrics") {
                             if (onLyrics_) onLyrics_(j.value("data", json::object()).dump());
+                        } else if (type == "heartbeat") {
+                            // P0-3: 每秒心跳只携带播放状态，避免整包歌词的重复序列化/解析
+                            if (onHeartbeat_) onHeartbeat_(j.value("data", json::object()).dump());
                         } else if (IsShutdownCommand(j)) {
                             if (onCommand_) onCommand_("shutdown");
                         } else if (type == "ping") {

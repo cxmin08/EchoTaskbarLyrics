@@ -33,6 +33,8 @@ public:
 
     void OnCommand(CommandCallback cb) { onCommand_ = std::move(cb); }
     void OnLyrics(LyricsCallback cb) { onLyrics_ = std::move(cb); }
+    // P0-3: 轻量心跳（仅播放状态，不含歌词），回调收到 data 对象的 JSON 串
+    void OnHeartbeat(LyricsCallback cb) { onHeartbeat_ = std::move(cb); }
 
     bool SendControlCommand(const std::string& command);
 
@@ -45,6 +47,7 @@ private:
     std::atomic<bool> running_{false};
     CommandCallback onCommand_;
     LyricsCallback onLyrics_;
+    LyricsCallback onHeartbeat_;
 
     mutable std::mutex clientMutex_;
     std::weak_ptr<ix::WebSocket> activeClient_;

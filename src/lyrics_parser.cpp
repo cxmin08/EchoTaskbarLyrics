@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <initializer_list>
 #include <regex>
@@ -108,9 +109,34 @@ std::string SongIdentity(const PlayerState& state) {
 
 } // namespace
 
+namespace {
+
+/// P0-2: 播放中无歌词的宽限期（秒）。超过后按纯音乐处理显示频谱，
+/// 宽限期内视为"歌词可能还在加载"
+constexpr double kNoLyricsGraceSec = 2.5;
+
+/// P0-3: 心跳时间与本地推算的重同步阈值（秒）。小于该偏差不重置时基
+constexpr double kHeartbeatResyncThresholdSec = 0.25;
+
+/// 行起始时间：优先字符级时间轴，回退行级时间戳
+int64_t LineStartMs(const LyricLine& line) {
+    return line.characters.empty() ? line.startTime
+                                   : line.characters.front().startTime;
+}
+
+} // namespace
+
 void LyricsParser::UpdateLyrics(const LyricsData& data) {
     std::lock_guard<std::mutex> lock(mutex_);
     lyrics_ = data;
+    // C-23: FindLineIndex 二分查找依赖行按时间升序，此处统一排序兜底乱序数据
+    std::stable_sort(lyrics_.lines.begin(), lyrics_.lines.end(),
+                     [](const LyricLine& a, const LyricLine& b) {
+                         return LineStartMs(a) < LineStartMs(b);
+                     });
+    if (lyrics_.valid && !lyrics_.lines.empty()) {
+        noLyricsSinceWallTime_ = 0.0;
+    }
 }
 
 void LyricsParser::UpdatePlayerState(const PlayerState& state) {
@@ -119,10 +145,41 @@ void LyricsParser::UpdatePlayerState(const PlayerState& state) {
     const std::string newSong = SongIdentity(state);
     if (!oldSong.empty() && !newSong.empty() && oldSong != newSong) {
         lyrics_ = LyricsData{};
+        noLyricsSinceWallTime_ = 0.0;  // 切歌后重新计宽限期
     }
     state_ = state;
     // 记录本地高精度时钟，用于 GetCurrentRenderState() 中推算时间
     lastUpdateWallTime_ = GetWallTimeSeconds();
+}
+
+void LyricsParser::SyncPlaybackHeartbeat(bool isPlaying, double currentTimeSec,
+                                         double playbackRate, double durationSec) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const bool stateChanged =
+        (isPlaying != state_.isPlaying) ||
+        (std::abs(playbackRate - state_.playbackRate) > 1e-3);
+
+    // 与 GetCurrentRenderState 相同的本地推算，用于计算偏差
+    double localTime = state_.currentTime;
+    if (state_.isPlaying && lastUpdateWallTime_ > 0.0) {
+        const double elapsed = GetWallTimeSeconds() - lastUpdateWallTime_;
+        if (elapsed > 0.0) {
+            localTime = state_.currentTime + elapsed * std::max(0.1, state_.playbackRate);
+        }
+    }
+
+    state_.isPlaying    = isPlaying;
+    state_.playbackRate = std::max(0.1, playbackRate);
+    if (durationSec > 0.0) state_.duration = durationSec;
+
+    // 仅在播放状态变化（含跳转/暂停）或偏差超阈值时重置时基；
+    // 小偏差交给本地时钟继续推算，避免高亮每秒被拽回
+    if (stateChanged ||
+        std::abs(currentTimeSec - localTime) > kHeartbeatResyncThresholdSec) {
+        state_.currentTime = currentTimeSec;
+        lastUpdateWallTime_ = GetWallTimeSeconds();
+    }
 }
 
 bool LyricsParser::HasLyrics() const {
@@ -188,8 +245,20 @@ RenderState LyricsParser::GetCurrentRenderState() const {
     }
     out.currentTime = effectiveTime;
 
+    // P0-2: 无歌词宽限期判定——播放中持续无歌词超过宽限期则按纯音乐处理，
+    // 让频谱路径生效并保持窗口可交互（区分"歌词加载中"与"整首无歌词"）
+    auto noLyricsGraceElapsed = [this]() -> bool {
+        const double now = GetWallTimeSeconds();
+        if (noLyricsSinceWallTime_ <= 0.0) {
+            noLyricsSinceWallTime_ = now;
+            return false;
+        }
+        return (now - noLyricsSinceWallTime_) >= kNoLyricsGraceSec;
+    };
+
     if (!lyrics_.valid || lyrics_.lines.empty()) {
         out.hasLyrics = false;
+        out.isInstrumental = state_.isPlaying && noLyricsGraceElapsed();
         return out;
     }
     out.hasLyrics = true;
@@ -213,10 +282,14 @@ RenderState LyricsParser::GetCurrentRenderState() const {
         }
         if (!hasNonEmptyLine || allNonLyricPlaceholder) {
             out.hasLyrics = false;
-            out.isInstrumental = hasPureMusicMarker;
+            // 显式纯音乐占位立即律动；其余占位（暂无歌词等）走宽限期
+            out.isInstrumental = hasPureMusicMarker ||
+                                 (state_.isPlaying && noLyricsGraceElapsed());
             return out;
         }
     }
+    // 走到这里说明有真实歌词内容，重置无歌词计时
+    noLyricsSinceWallTime_ = 0.0;
 
     const int idx = FindLineIndex(effectiveTime);
     if (idx < 0) {

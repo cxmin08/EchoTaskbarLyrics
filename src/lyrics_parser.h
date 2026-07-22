@@ -26,6 +26,11 @@ public:
     // 从 WebSocket 接收播放状态时调用
     void UpdatePlayerState(const PlayerState& state);
 
+    // P0-3: 轻量心跳同步。仅当播放状态变化或与本地推算偏差超阈值时
+    // 才重置本地时基，避免传输链路的固定延迟每秒被重新注入
+    void SyncPlaybackHeartbeat(bool isPlaying, double currentTimeSec,
+                               double playbackRate, double durationSec);
+
     // 主循环每帧调用,返回当前应渲染的内容
     RenderState GetCurrentRenderState() const;
 
@@ -55,6 +60,10 @@ private:
     // 本地时钟死推算：记录收到 playerState 时的本地时间
     // 用于在 GetCurrentRenderState() 中推算播放进度，使逐字高亮平滑推进
     mutable double lastUpdateWallTime_{0.0};
+
+    // P0-2: 播放中但无歌词数据的起始时刻（0 = 未计时）。
+    // 超过宽限期仍无歌词则按纯音乐处理（显示频谱），宽限期用于区分"歌词加载中"
+    mutable double noLyricsSinceWallTime_{0.0};
 };
 
 } // namespace echo

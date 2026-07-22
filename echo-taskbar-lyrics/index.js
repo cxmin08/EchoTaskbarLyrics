@@ -11,6 +11,7 @@ let snapshotDispose = null;
 let syncTimer = 0;
 let lastNativeSync = null;
 let latestSnapshot = null;
+let latestSnapshotAt = 0;
 let nativeStarting = false;
 
 const makeToken = () => {
@@ -59,7 +60,9 @@ const getEstimatedPlaybackMs = (playback) => {
   if (!playback) return 0;
   const baseMs = Math.max(0, Number(playback.currentTime || 0) * 1000);
   if (!playback.isPlaying) return baseMs;
-  const updatedAt = Number(playback.updatedAt || Date.now());
+  // P0-4: 快照可能不带 updatedAt 字段——退回到本插件收到快照的时刻，
+  // 避免把已过期的 currentTime 当作"现在"发出去
+  const updatedAt = Number(playback.updatedAt || latestSnapshotAt || Date.now());
   const rate = Math.max(0.1, Number(playback.playbackRate || 1));
   const elapsedMs = Math.max(0, Date.now() - updatedAt) * rate;
   const durationMs = Math.max(0, Number(playback.duration || 0) * 1000);
@@ -127,6 +130,43 @@ const makeCharacters = (text, startTime, endTime) => {
   }));
 };
 
+// P0-1: 无逐字时间轴时按发音单元估算演唱时长（中文约 300ms/字，
+// 拉丁字母约 3 个字母一个音节），避免把行后间奏也算进高亮时长
+const KARAOKE_CHAR_MS = 300;
+
+const estimateVocalMs = (text) => {
+  let units = 0;
+  let latinRun = 0;
+  for (const ch of Array.from(text || "")) {
+    if (/[A-Za-z0-9']/.test(ch)) {
+      latinRun += 1;
+    } else {
+      if (latinRun > 0) {
+        units += Math.ceil(latinRun / 3);
+        latinRun = 0;
+      }
+      if (!/\s/.test(ch)) units += 1;
+    }
+  }
+  if (latinRun > 0) units += Math.ceil(latinRun / 3);
+  return Math.max(KARAOKE_CHAR_MS, units * KARAOKE_CHAR_MS);
+};
+
+// 行自带的演唱结束时间（若上游提供）。短于 300ms 的 duration 视为
+// 单位可疑（可能是秒）而丢弃，落回估算路径。
+const getLineEndMs = (line, startTime) => {
+  const absolute = line?.endTime ?? line?.endMs;
+  if (absolute != null) {
+    const ms = toMilliseconds(absolute);
+    if (ms > startTime) return ms;
+  }
+  const duration = Number(line?.duration ?? line?.durationMs);
+  if (Number.isFinite(duration) && duration >= 300) {
+    return startTime + Math.round(duration);
+  }
+  return 0;
+};
+
 const normalizeCharacters = (line, text, startTime, endTime) => {
   if (Array.isArray(line?.characters) && line.characters.length > 0) {
     const chars = line.characters
@@ -165,13 +205,23 @@ const normalizeLyrics = (snapshot) => {
       translated: getLineTranslation(line),
       startTime: getLineStartMs(line),
     }))
-    .filter((line) => line.text);
+    .filter((line) => line.text)
+    // 原生端 FindLineIndex 用二分查找，依赖行按时间升序（C-23 防御）
+    .sort((a, b) => a.startTime - b.startTime);
 
   return lines.map((line, index) => {
     const nextStart =
       index + 1 < lines.length
         ? Math.max(lines[index + 1].startTime, line.startTime + 300)
         : line.startTime + 2800;
+    // P0-1: 伪造逐字时间轴不能铺满整个行间隔——间奏会让高亮慢于人声。
+    // 优先用行自带的演唱结束时间，否则按发音单元估算，均以下一行开始为上限。
+    const declaredEnd = getLineEndMs(line.raw, line.startTime);
+    const estimatedEnd = line.startTime + estimateVocalMs(line.text);
+    const vocalEnd = Math.min(
+      nextStart,
+      declaredEnd > line.startTime ? declaredEnd : estimatedEnd,
+    );
     return {
       text: line.text,
       translated: line.translated,
@@ -180,7 +230,7 @@ const normalizeLyrics = (snapshot) => {
         line.raw,
         line.text,
         line.startTime,
-        nextStart,
+        vocalEnd,
       ),
     };
   });
@@ -195,13 +245,16 @@ const buildPayload = (snapshot) => {
     track.artist,
     Array.isArray(track.artists) ? track.artists.join(" / ") : "",
   );
+  // 官方契约：歌词时钟 = 播放进度 + lyric.timeOffset（用户可调偏移，毫秒）
+  const lyricSeekMs =
+    getEstimatedPlaybackMs(playback) + Number(snapshot?.lyric?.timeOffset || 0);
 
   return {
     source: "EchoMusic",
     isPlaying: Boolean(playback.isPlaying),
     // 私人 FM 状态来自 EchoMusic snapshot，原生端据此把“上一首”切换为“不喜欢”。
     isPersonalFM: Boolean(playback.isPersonalFM),
-    currentTime: getEstimatedPlaybackMs(playback) / 1000,
+    currentTime: lyricSeekMs / 1000,
     duration: Number(playback.duration || track.duration || 0),
     playbackRate: Math.max(0.1, Number(playback.playbackRate || 1)),
     songName: title,
@@ -224,7 +277,23 @@ const syncSnapshot = async ({ force = false } = {}) => {
 
   const payload = buildPayload(latestSnapshot);
   const now = Date.now();
-  const signature = JSON.stringify({ ...payload, currentTime: 0 });
+  // P0-3: 签名只取元数据，不再对整包歌词做 JSON.stringify。
+  // lyricsBytes 用于捕捉行数不变但内容变化的情况（如翻译异步到达）。
+  const signature = JSON.stringify({
+    isPlaying: payload.isPlaying,
+    isPersonalFM: payload.isPersonalFM,
+    duration: payload.duration,
+    playbackRate: payload.playbackRate,
+    songName: payload.songName,
+    songTitle: payload.songTitle,
+    coverArtUrl: payload.coverArtUrl,
+    lineCount: payload.lyricsData.length,
+    lyricsBytes: payload.lyricsData.reduce(
+      (sum, line) =>
+        sum + line.text.length + (line.translated ? line.translated.length : 0),
+      0,
+    ),
+  });
   const rawPredictedTime = lastNativeSync
     ? lastNativeSync.currentTime +
       (lastNativeSync.isPlaying
@@ -316,14 +385,34 @@ const handleNativeMessage = (ctx, raw) => {
   }
 };
 
+// P0-3: 心跳只发轻量播放状态——歌词仅在内容变化时全量发送，
+// 避免每秒搬运整包歌词并把序列化/解析延迟每秒重新注入原生端时基
+const sendHeartbeat = () => {
+  if (!state?.ready || !latestSnapshot) return false;
+  const playback = latestSnapshot.playback || {};
+  const track = playback.track || playback.currentTrack || {};
+  // 与 buildPayload 一致：歌词时钟叠加 lyric.timeOffset（官方契约）
+  const lyricSeekMs =
+    getEstimatedPlaybackMs(playback) +
+    Number(latestSnapshot?.lyric?.timeOffset || 0);
+  return sendNative({
+    type: "heartbeat",
+    data: {
+      isPlaying: Boolean(playback.isPlaying),
+      currentTime: lyricSeekMs / 1000,
+      playbackRate: Math.max(0.1, Number(playback.playbackRate || 1)),
+      duration: Number(playback.duration || track.duration || 0),
+    },
+  });
+};
+
 const startSyncTimer = () => {
   if (syncTimer) window.clearInterval(syncTimer);
   syncTimer = window.setInterval(() => {
-    // The native window can lose its topmost Z-order after Shell interactions.
-    // A periodic lyrics heartbeat lets the helper restore it promptly.
-    void syncSnapshot({ force: true }).catch((error) => {
-      console.warn("[echo-taskbar-lyrics] heartbeat sync failed", error);
-    });
+    // 心跳兼职置顶保活：原生端收到后仅在检测到丢失 TOPMOST 时恢复
+    if (!sendHeartbeat()) {
+      console.warn("[echo-taskbar-lyrics] heartbeat send failed");
+    }
   }, 1000);
 };
 
@@ -471,6 +560,7 @@ const startNative = async (ctx) => {
         await connectNative(ctx);
         state.ready = true;
         latestSnapshot = await getNowPlayingSnapshot(ctx);
+        latestSnapshotAt = Date.now();
         await syncSnapshot({ force: true }).catch(() => undefined);
         startSyncTimer();
         return;
@@ -508,6 +598,7 @@ export async function activate(ctx) {
 
   snapshotDispose = ctx.nowPlaying.onSnapshot((snapshot) => {
     latestSnapshot = snapshot;
+    latestSnapshotAt = Date.now();
     void syncSnapshot().catch((error) => {
       console.warn("[echo-taskbar-lyrics] snapshot sync failed", error);
     });
@@ -521,5 +612,6 @@ export async function deactivate(ctx) {
   snapshotDispose = null;
   await stopNative(ctx);
   latestSnapshot = null;
+  latestSnapshotAt = 0;
   state = null;
 }
