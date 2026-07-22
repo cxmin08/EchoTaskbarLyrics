@@ -15,9 +15,6 @@
 #include <thread>
 #include <utility>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
 namespace echo {
 
 using json = nlohmann::json;
@@ -223,18 +220,10 @@ void WebSocketClient::Disconnect() {
     stopRequested_.store(true);
     reconnectNow_.store(false);
 
-    // 先等待 reconnectThread 退出，避免 ix::WebSocket::stop() 与 reconnectThread 死锁
+    // 先等待 reconnectThread 退出，避免 ix::WebSocket::stop() 与重连流程并发。
+    // 线程和消息回调都捕获 this，析构前必须完成 join，不能超时 detach。
     if (reconnectThread_.joinable()) {
-        DWORD waitResult = ::WaitForSingleObject(
-            reconnectThread_.native_handle(),
-            echo::constants::THREAD_JOIN_TIMEOUT_MS);
-        if (waitResult == WAIT_TIMEOUT) {
-            echo::Log("[WS] Reconnect thread join timed out (%d ms), detaching\n",
-                       echo::constants::THREAD_JOIN_TIMEOUT_MS);
-            reconnectThread_.detach();
-        } else {
-            reconnectThread_.join();
-        }
+        reconnectThread_.join();
     }
 
     // reconnectThread 已退出后再 stop client，避免锁争用
