@@ -907,11 +907,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
                     j.value("playbackRate", 1.0),
                     j.value("duration", 0.0));
             }
-            // 仅在检测到丢失 TOPMOST 时才恢复，避免每秒无条件 SetWindowPos
+            // WS_EX_TOPMOST 只表示窗口位于 topmost band，不能反映它是否已被
+            // 其他 topmost/Shell 窗口压到后面。每次心跳都重新提交 Z-order，
+            // 才能真正恢复“样式位仍在、实际层级已丢失”的情况。
             if (app.taskbarWindow) {
                 HWND h = app.taskbarWindow->GetHandle();
-                if (h && ::IsWindowVisible(h) &&
-                    !(::GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
+                if (h && ::IsWindowVisible(h)) {
                     ::SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
                                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 }
