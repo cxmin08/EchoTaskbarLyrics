@@ -11,8 +11,9 @@ namespace echo {
 void TaskbarRenderer::DrawCentered(const std::wstring& text, ID2D1Brush* brush, float yOffset) {
     if (!renderTarget_ || !textFormat_ || !brush || text.empty()) return;
     
-    // 水平偏移量（像素）
-    const float paddingX = constants::TEXT_PADDING_X;
+    // render target 固定 96 DPI，DP 内边距需显式换算为物理像素。
+    const float paddingX = constants::TEXT_PADDING_X *
+                           static_cast<float>(dpi_) / 96.0f;
     
     D2D1_RECT_F layout = D2D1::RectF(
         paddingX, yOffset,
@@ -35,7 +36,9 @@ void TaskbarRenderer::DrawHighlightedTextPerCharacter(const std::wstring& text,
     const UINT32 length = static_cast<UINT32>(text.size());
     if (length == 0) return;
 
-    const float paddingX = overridePaddingX ? *overridePaddingX : constants::TEXT_PADDING_X;
+    const float paddingX = overridePaddingX
+        ? *overridePaddingX
+        : constants::TEXT_PADDING_X * static_cast<float>(dpi_) / 96.0f;
     const float availableWidth = static_cast<FLOAT>(width_) - paddingX * 2.0f;
 
     D2D1_RECT_F layoutRect = D2D1::RectF(
@@ -136,8 +139,10 @@ void TaskbarRenderer::DrawHighlightedTextPerCharacter(const std::wstring& text,
 void TaskbarRenderer::DrawTranslatedText(const std::wstring& text, const float* overridePaddingX, float opacity) {
     if (!translationFormat_ || !translationBrush_ || text.empty()) return;
 
-    // 水平偏移量（像素）：支持垂直模式下的自定义内边距
-    const float paddingX = overridePaddingX ? *overridePaddingX : constants::TEXT_PADDING_X;
+    // 水平偏移量（物理像素）：支持垂直模式下的自定义内边距。
+    const float paddingX = overridePaddingX
+        ? *overridePaddingX
+        : constants::TEXT_PADDING_X * static_cast<float>(dpi_) / 96.0f;
 
     // P3-①: 歌词行切换 fade 过渡期间，旧行翻译通过 opacity<1 渐隐
     if (opacity < 1.0f) {

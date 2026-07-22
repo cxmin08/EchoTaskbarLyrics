@@ -34,7 +34,8 @@ float TaskbarRenderer::UpdateMarquee(const std::string& lyricText, float progres
         return 0.0f;
     }
 
-    const float paddingX = constants::TEXT_PADDING_X;
+    const float paddingX = constants::TEXT_PADDING_X *
+                           static_cast<float>(dpi_) / 96.0f;
     const float rawAvailableWidth = availableWidthOverride >= 0.0f
         ? availableWidthOverride
         : static_cast<FLOAT>(width_) - paddingX * 2.0f;

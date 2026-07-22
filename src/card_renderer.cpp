@@ -213,7 +213,7 @@ void TaskbarRenderer::RenderCardStyle(const RenderState& state) {
 
 void TaskbarRenderer::RenderCardStyleVertical(const RenderState& state) {
     const float dpiScale = static_cast<float>(dpi_) / 96.0f;
-    const float paddingX = constants::TEXT_PADDING_X * 0.5f;  // 窄窗口减小左右边距
+    const float paddingX = constants::TEXT_PADDING_X * 0.5f * dpiScale;
     const float w = static_cast<float>(width_);
     const float h = static_cast<float>(height_);
 

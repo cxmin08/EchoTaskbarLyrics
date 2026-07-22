@@ -379,6 +379,18 @@ void TaskbarRenderer::PresentToLayeredWindow() {
 void TaskbarRenderer::Render(const RenderState& state) {
     if (!initialized_ || !renderTarget_) return;
 
+    // WIC render target 固定使用 96 DPI，所有布局尺寸显式按窗口当前 DPI 缩放。
+    // DPI 或窗口尺寸变化必须在状态短路判断之前处理，否则静态画面不会触发重建。
+    RECT rc{};
+    ::GetWindowRect(hwnd_, &rc);
+    const UINT currentWidth = static_cast<UINT>(std::max<LONG>(rc.right - rc.left, 1));
+    const UINT currentHeight = static_cast<UINT>(std::max<LONG>(rc.bottom - rc.top, 1));
+    const UINT currentDpi = ::GetDpiForWindow(hwnd_);
+    if (currentWidth != width_ || currentHeight != height_ || currentDpi != dpi_) {
+        Resize(currentWidth, currentHeight, currentDpi);
+        if (!renderTarget_) return;
+    }
+
     static int renderEntryLogCount = 0;
     if (++renderEntryLogCount <= 5) {
         Log("[RENDER] entry #%d: displayMode='%s' hasLyrics=%d isPlaying=%d curLine='%s' coverUrl='%s'\n",
@@ -401,7 +413,7 @@ void TaskbarRenderer::Render(const RenderState& state) {
         const float dpiScale = static_cast<float>(dpi_) / 96.0f;
         float cardLyricsWidth = 0.0f;
         if (isVerticalTaskbar_) {
-            const float paddingX = constants::TEXT_PADDING_X * 0.5f;
+            const float paddingX = constants::TEXT_PADDING_X * 0.5f * dpiScale;
             cardLyricsWidth = static_cast<float>(width_) - paddingX * 2.0f;
         } else {
             const float coverSize = static_cast<float>(settings_.cardCoverSize) * dpiScale;
@@ -487,14 +499,6 @@ void TaskbarRenderer::Render(const RenderState& state) {
     lastState_ = state;
     forceRedraw_ = false;
 
-    RECT rc{};
-    ::GetWindowRect(hwnd_, &rc);
-    const UINT w = static_cast<UINT>(std::max<LONG>(rc.right - rc.left, 1));
-    const UINT h = static_cast<UINT>(std::max<LONG>(rc.bottom - rc.top, 1));
-    if (w != width_ || h != height_) {
-        Resize(w, h, dpi_);
-    }
-
     renderTarget_->BeginDraw();
 
     // 悬停时填充极低 alpha 背景，使整个窗口区域可接收鼠标消息
@@ -548,9 +552,10 @@ void TaskbarRenderer::Render(const RenderState& state) {
     } else {
         // ═════ 卡拉OK渲染路径 ═════
         // 垂直任务栏时减小内边距以适应窄窗口
+        const float dpiScale = static_cast<float>(dpi_) / 96.0f;
         const float vertPaddingX = isVerticalTaskbar_
-            ? constants::TEXT_PADDING_X * 0.4f
-            : constants::TEXT_PADDING_X;
+            ? constants::TEXT_PADDING_X * 0.4f * dpiScale
+            : constants::TEXT_PADDING_X * dpiScale;
 
         if (state.hasLyrics && !state.currentLine.empty()) {
             const std::wstring lineW = Utf8ToWide(state.currentLine);
@@ -594,8 +599,9 @@ void TaskbarRenderer::Render(const RenderState& state) {
                 if (!state.spectrumBands.empty()) {
                     // 全高频谱
                     DrawSpectrumBars(state.spectrumBands,
-                                     constants::TEXT_PADDING_X,
-                                     static_cast<float>(width_) - 2.0f * constants::TEXT_PADDING_X,
+                                     constants::TEXT_PADDING_X * dpiScale,
+                                     static_cast<float>(width_) -
+                                         2.0f * constants::TEXT_PADDING_X * dpiScale,
                                      0.0f, static_cast<float>(height_));
                 } else {
                     DrawCentered(L"...", normalBrush_.Get(), 0.0f);
