@@ -14,6 +14,45 @@
 
 namespace echo {
 
+namespace {
+
+struct ChildRectSearch {
+    RECT* taskList;
+    bool* foundTaskList;
+    RECT* tray;
+    bool* foundTray;
+    RECT* rebar;
+    bool* foundRebar;
+    int taskbarWidth;
+};
+
+BOOL CALLBACK FindTaskbarDescendant(HWND hwnd, LPARAM param) {
+    if (!::IsWindowVisible(hwnd)) return TRUE;
+    auto* search = reinterpret_cast<ChildRectSearch*>(param);
+    wchar_t name[256] = {};
+    ::GetClassNameW(hwnd, name, 256);
+    RECT rect{};
+    ::GetWindowRect(hwnd, &rect);
+    if (wcscmp(name, L"MSTaskListWClass") == 0) {
+        *search->taskList = rect;
+        *search->foundTaskList = true;
+    } else if (wcscmp(name, L"Windows.UI.Composition.DesktopWindowContentBridge") == 0) {
+        if ((rect.right - rect.left) < search->taskbarWidth - 10) {
+            *search->taskList = rect;
+            *search->foundTaskList = true;
+        }
+    } else if (wcscmp(name, L"TrayNotifyWnd") == 0) {
+        *search->tray = rect;
+        *search->foundTray = true;
+    } else if (wcscmp(name, L"ReBarWindow32") == 0) {
+        *search->rebar = rect;
+        *search->foundRebar = true;
+    }
+    return TRUE;
+}
+
+} // namespace
+
 TaskbarGeometry::TaskbarGeometry() = default;
 TaskbarGeometry::~TaskbarGeometry() { CleanupUIA(); }
 
@@ -66,9 +105,11 @@ void TaskbarGeometry::CleanupUIA() {
     if (uia_) { uia_->Release(); uia_ = nullptr; }
 }
 
-bool TaskbarGeometry::GetChildRectsByUIA(RECT& tl, bool& fTL, RECT& tr, bool& fTR,
+bool TaskbarGeometry::GetChildRectsByUIA(HWND hTaskbar,
+                                          RECT& tl, bool& fTL, RECT& tr, bool& fTR,
                                           RECT& rb, bool& fRB, int tbW) {
     fTL = fTR = fRB = false;
+    if (!hTaskbar) return false;
     if (!uia_) {
         // ── 降级：UIA 不可用（COM 未初始化或 CoCreateInstance 失败），回退到 EnumChildWindows ──
         // Win11 任务栏子窗口结构：
@@ -76,36 +117,15 @@ bool TaskbarGeometry::GetChildRectsByUIA(RECT& tl, bool& fTL, RECT& tr, bool& fT
         //   DesktopWindowContentBridge    → Win11 24H2+ 任务列表的替代类名（非标准）
         //   TrayNotifyWnd                 → 系统托盘（时钟、通知图标）
         //   ReBarWindow32                 → 工具栏容器
-        HWND hTB = ::FindWindowW(L"Shell_TrayWnd", nullptr);
-        if (!hTB) return false;
-        HWND hChild = ::GetWindow(hTB, GW_CHILD);
-        while (hChild) {
-            if (::IsWindowVisible(hChild)) {
-                wchar_t name[256] = {};
-                ::GetClassNameW(hChild, name, 256);
-                RECT cr{};
-                ::GetWindowRect(hChild, &cr);
-                if (wcscmp(name, L"MSTaskListWClass") == 0) {
-                    tl = cr; fTL = true;
-                } else if (wcscmp(name, L"Windows.UI.Composition.DesktopWindowContentBridge") == 0) {
-                    // Win11 虚拟化任务栏中该 wrapper 窗覆盖全宽和任务列表区域，
-                    // 宽度 < tbWidth - 10 的区分任务列表 wrapper 和托盘 wrapper
-                    if ((cr.right - cr.left) < tbW - 10) { tl = cr; fTL = true; }
-                } else if (wcscmp(name, L"TrayNotifyWnd") == 0) {
-                    tr = cr; fTR = true;
-                } else if (wcscmp(name, L"ReBarWindow32") == 0) {
-                    rb = cr; fRB = true;
-                }
-            }
-            hChild = ::GetWindow(hChild, GW_HWNDNEXT);
-        }
+        ChildRectSearch search{&tl, &fTL, &tr, &fTR, &rb, &fRB, tbW};
+        ::EnumChildWindows(hTaskbar, FindTaskbarDescendant,
+                           reinterpret_cast<LPARAM>(&search));
         return true;  // 降级成功
     }
 
     // ── UIA 路径：通过 IUIAutomationElement 枚举 Shell_TrayWnd 子元素 ──
     IUIAutomationElement* tbElem = nullptr;
-    HWND hTB = ::FindWindowW(L"Shell_TrayWnd", nullptr);
-    if (FAILED(uia_->ElementFromHandle(hTB, &tbElem)) || !tbElem) return false;
+    if (FAILED(uia_->ElementFromHandle(hTaskbar, &tbElem)) || !tbElem) return false;
 
     // 辅助 lambda：按 ClassName 查找子元素，提取其 CurrentBoundingRectangle
     // maxW 用于 DesktopWindowContentBridge 去重（区分任务列表和托盘包装器）

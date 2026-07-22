@@ -73,6 +73,11 @@ bool& GetDialogResult() {
     return s_result;
 }
 
+bool& GetDialogShowing() {
+    static bool s_showing = false;
+    return s_showing;
+}
+
 // 创建标签
 HWND CreateLabel(HWND parent, int id, const wchar_t* text, int x, int y, int w, int h) {
     return ::CreateWindowExW(0, L"STATIC", text,
@@ -132,6 +137,12 @@ std::wstring GetEditText(HWND hwnd, int id) {
 bool ConfigDialog::Show(HINSTANCE hInstance, HWND parent, Config& config,
                         bool boundMode, std::function<void()> onUnbind,
                         std::function<void()> onApply) {
+    if (GetDialogShowing()) return false;
+    GetDialogShowing() = true;
+    struct ShowingGuard {
+        ~ShowingGuard() { GetDialogShowing() = false; }
+    } showingGuard;
+
     // 使用自定义窗口类创建模态对话框
     // 通过 DialogBoxParam 需要资源，这里用 CreateWindow 模拟模态对话框
 
@@ -323,7 +334,8 @@ bool ConfigDialog::ReadControls(HWND hwnd, Config& config) {
     a.normalColor       = nmColor.empty() ? a.normalColor : nmColor;
     a.normalOpacity     = opacityStr.empty() ? a.normalOpacity : std::clamp(_wtoi(opacityStr.c_str()) / 100.0, 0.0, 1.0);
     a.fontFamily        = fontFamily.empty() ? a.fontFamily : fontFamily;
-    a.fontSize          = fontSizeStr.empty() ? a.fontSize : std::max(8, _wtoi(fontSizeStr.c_str()));
+    a.fontSize          = fontSizeStr.empty() ? a.fontSize :
+                          std::clamp(_wtoi(fontSizeStr.c_str()), 10, 28);
     a.enableKaraoke     = ::IsDlgButtonChecked(hwnd, IDC_CHK_KARAOKE) == BST_CHECKED;
     a.enableTranslation = ::IsDlgButtonChecked(hwnd, IDC_CHK_TRANSLATION) == BST_CHECKED;
 

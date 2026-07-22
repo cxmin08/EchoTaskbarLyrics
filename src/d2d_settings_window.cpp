@@ -201,7 +201,9 @@ bool D2DSettingsWindow::InitD2D() {
     dwriteFactory_->CreateTextFormat(
         L"Microsoft YaHei UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, L"zh-Hans", &sectionFmt_);
-    sectionFmt_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP); // 不换行
+    if (sectionFmt_) {
+        sectionFmt_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP); // 不换行
+    }
 
     dwriteFactory_->CreateTextFormat(
         L"Microsoft YaHei UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
@@ -266,7 +268,7 @@ LRESULT CALLBACK D2DSettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, 
     case WM_NCCREATE: {
         CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-        return 1;
+        return ::DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
     case WM_CREATE:

@@ -35,9 +35,16 @@ float TaskbarRenderer::UpdateMarquee(const std::string& lyricText, float progres
     }
 
     const float paddingX = constants::TEXT_PADDING_X;
-    const float availableWidth = availableWidthOverride > 0.0f
+    const float rawAvailableWidth = availableWidthOverride >= 0.0f
         ? availableWidthOverride
         : static_cast<FLOAT>(width_) - paddingX * 2.0f;
+    const float availableWidth = std::max(0.0f, rawAvailableWidth);
+    if (availableWidth <= 0.0f) {
+        marqueeState_ = MarqueeState::Idle;
+        scrollOffset_ = 0.0f;
+        marqueeMaxOffset_ = 0.0f;
+        return 0.0f;
+    }
     IDWriteTextFormat* format = measureFormat ? measureFormat : textFormat_.Get();
 
     const bool measureChanged =

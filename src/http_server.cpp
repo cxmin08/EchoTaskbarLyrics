@@ -17,7 +17,9 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <utility>
 
@@ -33,6 +35,22 @@ bool ConstantTimeEquals(const std::string& a, const std::string& b) {
         diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
     }
     return diff == 0;
+}
+
+bool IsAllowedLocalOrigin(const std::string& origin) {
+    for (const std::string prefix : {"http://localhost", "http://127.0.0.1",
+                                     "https://localhost", "https://127.0.0.1"}) {
+        if (origin == prefix) return true;
+        if (origin.rfind(prefix + ":", 0) == 0) {
+            const std::string port = origin.substr(prefix.size() + 1);
+            if (!port.empty() && std::all_of(port.begin(), port.end(), [](unsigned char ch) {
+                    return std::isdigit(ch) != 0;
+                })) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // Validate shutdown command from JSON body，使用 nlohmann::json 替代手工 strstr 解析，
@@ -105,23 +123,12 @@ void HttpServer::Stop() {
         }
     }
 
-    if (serverThread_.joinable()) {
-        DWORD waitResult = ::WaitForSingleObject(
-            serverThread_.native_handle(),
-            echo::constants::THREAD_JOIN_TIMEOUT_MS);
-        if (waitResult == WAIT_TIMEOUT) {
-            echo::Log("[SERVER] Thread join timed out (%d ms), forcing exit\n",
-                       echo::constants::THREAD_JOIN_TIMEOUT_MS);
-            serverThread_.detach();
-            ::ExitProcess(2);
-        } else {
-            serverThread_.join();
-        }
-    }
+    if (serverThread_.joinable()) serverThread_.join();
 }
 
 void HttpServer::ServerLoop(int port) {
     httplib::Server svr;
+    svr.set_payload_max_length(constants::MAX_WS_MESSAGE_SIZE);
 
     // ===========================================
     // Middleware: CORS headers + auth check
@@ -129,9 +136,16 @@ void HttpServer::ServerLoop(int port) {
     svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
         // CORS headers (localhost-only origin)
         const std::string origin = req.has_header("Origin")
-                                       ? req.get_header_value("Origin")
-                                       : "*";
-        res.set_header("Access-Control-Allow-Origin", origin);
+            ? req.get_header_value("Origin") : "";
+        if (!origin.empty() && !IsAllowedLocalOrigin(origin)) {
+            res.status = 403;
+            res.set_content("{\"error\":\"origin not allowed\"}", "application/json");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        if (!origin.empty()) {
+            res.set_header("Access-Control-Allow-Origin", origin);
+            res.set_header("Vary", "Origin");
+        }
         res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         char allowHeaders[128];
         snprintf(allowHeaders, sizeof(allowHeaders), "Content-Type, %s",

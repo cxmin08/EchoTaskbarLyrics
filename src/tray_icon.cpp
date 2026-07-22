@@ -206,6 +206,7 @@ void TrayIcon::ShowContextMenu(HWND hwnd) {
     if (cmd != 0) {
         ::PostMessageW(hwnd, WM_COMMAND, cmd, 0);
     }
+    ::PostMessageW(hwnd, WM_NULL, 0, 0);
 }
 
 void TrayIcon::OnTrayMessage(HWND hwnd, WPARAM, LPARAM lParam) {

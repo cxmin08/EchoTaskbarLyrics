@@ -82,12 +82,6 @@ const secondsToMilliseconds = (value) => {
   return Math.round(number * 1000);
 };
 
-const unknownTimeToMilliseconds = (value) => {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return 0;
-  return number > 100000 ? Math.round(number) : Math.round(number * 1000);
-};
-
 const pickText = (...values) => {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value;
@@ -114,7 +108,7 @@ const getLineStartMs = (line) => {
   if (line.startTime != null) return toMilliseconds(line.startTime);
   if (line.startMs != null) return Math.round(Number(line.startMs) || 0);
   if (line.time != null) return secondsToMilliseconds(line.time);
-  if (line.timestamp != null) return unknownTimeToMilliseconds(line.timestamp);
+  if (line.timestamp != null) return toMilliseconds(line.timestamp);
   return 0;
 };
 
@@ -540,8 +534,6 @@ const startNative = async (ctx) => {
         executable: "EchoTaskbarLyrics.exe",
         args: [
           "--echo-plugin",
-          "--auth-token",
-          state.authToken,
           "--bridge-port",
           String(state.bridgePort),
         ],

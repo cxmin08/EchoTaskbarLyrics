@@ -186,6 +186,10 @@ LyricsData WebSocketClient::ParseKrcString(const std::string& krcText) {
         ++parsedLines;
     }
 
+    std::stable_sort(data.lines.begin(), data.lines.end(),
+        [](const LyricLine& a, const LyricLine& b) {
+            return a.startTime < b.startTime;
+        });
     data.valid = !data.lines.empty();
     return data;
 }
@@ -491,6 +495,10 @@ void WebSocketClient::DispatchWsMessage(const std::string& raw) {
                 data.lines.push_back(std::move(line));
             }
         }
+        std::stable_sort(data.lines.begin(), data.lines.end(),
+            [](const LyricLine& a, const LyricLine& b) {
+                return a.startTime < b.startTime;
+            });
         data.valid = !data.lines.empty();
         try { if (onLyrics_) onLyrics_(data); } catch (...) { Log("Dispatch: onLyrics_ exception"); }
     } else if (type == "playerState") {

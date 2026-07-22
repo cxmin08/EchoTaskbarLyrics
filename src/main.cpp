@@ -62,7 +62,6 @@ using echo::renderer_utils::WideToUtf8;
 
 struct RuntimeOptions {
     bool echoPluginMode{false};
-    std::string authToken;
     int bridgePort{0};
 };
 
@@ -76,8 +75,6 @@ RuntimeOptions ParseRuntimeOptions() {
         const std::wstring arg = argv[i] ? argv[i] : L"";
         if (arg == L"--echo-plugin") {
             options.echoPluginMode = true;
-        } else if (arg == L"--auth-token" && i + 1 < argc) {
-            options.authToken = WideToUtf8(argv[++i]);
         } else if (arg == L"--bridge-port" && i + 1 < argc) {
             try {
                 const int port = std::stoi(WideToUtf8(argv[++i]));
@@ -512,9 +509,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
     // 目的：为应用提供运行时基础（COM、异常处理、日志、单实例保护）
     echo::InitLogger();
     const RuntimeOptions runtimeOptions = ParseRuntimeOptions();
-    if (!runtimeOptions.authToken.empty()) {
-        echo::Config::SetAuthTokenOverride(runtimeOptions.authToken);
-    }
     ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC/Direct2D 需要 COM
     ::SetUnhandledExceptionFilter(GlobalExceptionHandler);
 
@@ -850,6 +844,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
                     data = echo::WebSocketClient::ParseKrcString(ld.get<std::string>());
                 }
 
+                std::stable_sort(data.lines.begin(), data.lines.end(),
+                    [](const echo::LyricLine& a, const echo::LyricLine& b) {
+                        return a.startTime < b.startTime;
+                    });
                 data.valid = !data.lines.empty();
                 if (hasLyricsPayload) {
                     parser.UpdateLyrics(data);
@@ -916,7 +914,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*cmdLine*/, int /*nSho
         nativeHost.SetMessageHandler([&app](const echo::NativeHostMessage& msg) {
             Log("[NATIVE-HOST] Received message: type=%s\n", msg.type.c_str());
             // 业务消息处理：可根据 payload 中的 action 执行对应操作
-            if (msg.payload.contains("action")) {
+            if (msg.payload.contains("action") && msg.payload["action"].is_string()) {
                 std::string action = msg.payload["action"].get<std::string>();
                 Log("[NATIVE-HOST] Action: %s\n", action.c_str());
 

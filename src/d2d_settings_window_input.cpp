@@ -14,6 +14,29 @@ namespace echo {
 
 using namespace settings_window_detail;
 
+namespace {
+
+int PreviousUtf8Boundary(const std::string& text, int position) {
+    int next = std::clamp(position, 0, static_cast<int>(text.size()));
+    if (next == 0) return 0;
+    --next;
+    while (next > 0 && (static_cast<unsigned char>(text[next]) & 0xC0) == 0x80) --next;
+    return next;
+}
+
+int NextUtf8Boundary(const std::string& text, int position) {
+    int next = std::clamp(position, 0, static_cast<int>(text.size()));
+    if (next >= static_cast<int>(text.size())) return static_cast<int>(text.size());
+    ++next;
+    while (next < static_cast<int>(text.size()) &&
+           (static_cast<unsigned char>(text[next]) & 0xC0) == 0x80) {
+        ++next;
+    }
+    return next;
+}
+
+} // namespace
+
 void D2DSettingsWindow::OnMouseDown(int x, int y) {
     // 颜色选择器弹窗优先处理
     if (colorPicker_.IsActive()) {
@@ -270,15 +293,17 @@ void D2DSettingsWindow::OnChar(wchar_t ch) {
         if (c.editing) {
             if (ch == VK_BACK) {
                 if (c.caretPos > 0) {
-                    c.textValue.erase(c.caretPos - 1, 1);
-                    --c.caretPos;
+                    const int previous = PreviousUtf8Boundary(c.textValue, c.caretPos);
+                    c.textValue.erase(previous, c.caretPos - previous);
+                    c.caretPos = previous;
                 }
-            } else if (ch >= 32 && static_cast<int>(c.textValue.size()) < c.textMaxLen) {
+            } else if (ch >= 32) {
                 char mb[4] = {};
-                int n = WideCharToMultiByte(CP_UTF8, 0, &ch, 1, mb, 4, nullptr, nullptr);
-                if (n > 0) {
+                int n = WideCharToMultiByte(
+                    CP_UTF8, WC_ERR_INVALID_CHARS, &ch, 1, mb, 4, nullptr, nullptr);
+                if (n > 0 && static_cast<int>(c.textValue.size()) + n <= c.textMaxLen) {
                     c.textValue.insert(c.caretPos, mb, n);
-                    ++c.caretPos;
+                    c.caretPos += n;
                 }
             }
             c.showCaret = true;
@@ -312,10 +337,10 @@ void D2DSettingsWindow::OnKeyDown(UINT key) {
         if (c.editing) {
             switch (key) {
             case VK_LEFT:
-                if (c.caretPos > 0) --c.caretPos;
+                c.caretPos = PreviousUtf8Boundary(c.textValue, c.caretPos);
                 break;
             case VK_RIGHT:
-                if (c.caretPos < static_cast<int>(c.textValue.size())) ++c.caretPos;
+                c.caretPos = NextUtf8Boundary(c.textValue, c.caretPos);
                 break;
             case VK_HOME: c.caretPos = 0; break;
             case VK_END:  c.caretPos = static_cast<int>(c.textValue.size()); break;

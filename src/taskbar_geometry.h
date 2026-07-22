@@ -49,7 +49,8 @@ public:
     IUIAutomation* GetUIA() const { return uia_; }
 
     // 使用 UIA 枚举 Shell_TrayWnd 子窗口，获取关键区域的屏幕矩形
-    bool GetChildRectsByUIA(RECT& taskListRect, bool& foundTaskList,
+    bool GetChildRectsByUIA(HWND hTaskbar,
+                            RECT& taskListRect, bool& foundTaskList,
                             RECT& trayRect,    bool& foundTray,
                             RECT& rebarRect,   bool& foundRebar,
                             int   tbWidth);

@@ -89,19 +89,7 @@ void ProcessMonitor::Start(const std::wstring& exeName,
 
 void ProcessMonitor::Stop() {
     running_.store(false);
-    if (monitorThread_.joinable()) {
-        DWORD waitResult = ::WaitForSingleObject(
-            monitorThread_.native_handle(),
-            echo::constants::THREAD_JOIN_TIMEOUT_MS);
-        if (waitResult == WAIT_TIMEOUT) {
-            echo::Log("[PM] Monitor thread join timed out (%d ms), forcing exit\n",
-                       echo::constants::THREAD_JOIN_TIMEOUT_MS);
-            monitorThread_.detach();
-            ::ExitProcess(4);
-        } else {
-            monitorThread_.join();
-        }
-    }
+    if (monitorThread_.joinable()) monitorThread_.join();
 }
 
 } // namespace echo

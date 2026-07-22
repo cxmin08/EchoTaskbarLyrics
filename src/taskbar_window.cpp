@@ -80,6 +80,7 @@ bool TaskbarWindow::Create(HINSTANCE hInstance, HWND hParent) {
 
     // 4) 初始化 ShellCompanion（UIA、WinEvent 钩子）
     companion_.Initialize(hTaskbar, hwnd_);
+    companion_.OnRepositionNeeded([this]() { InternalPosition(); });
 
     // 5) 首次定位：记录 lastPosition_ 防止误判方位变化
     lastPosition_ = companion_.GetTaskbarInfo().position;
@@ -315,6 +316,12 @@ LRESULT CALLBACK TaskbarWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         }
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        if (self->isDragging_) {
+            self->isDragging_ = false;
+            if (self->onHoverChanged_) self->onHoverChanged_();
+        }
+        return 0;
     case WM_DPICHANGED: {
         self->dragOffsetX_ = 0;
         self->dragOffsetY_ = 0;

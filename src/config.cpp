@@ -11,7 +11,9 @@
 #include <cstring>
 #include <fstream>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
+#include <thread>
 #include <utility>
 #include <rpc.h>
 #include <shlobj.h>
@@ -79,6 +81,16 @@ Config::Config() = default;
 
 static std::string s_authTokenOverride;
 static std::mutex s_authTokenMutex;
+
+static std::mutex& AutoStartTaskMutex() {
+    static auto* mutex = new std::mutex();
+    return *mutex;
+}
+
+static std::atomic<uint64_t>& AutoStartTaskGeneration() {
+    static auto* generation = new std::atomic<uint64_t>(0);
+    return *generation;
+}
 
 void Config::SetAuthTokenOverride(std::string token) {
     std::lock_guard<std::mutex> lock(s_authTokenMutex);
@@ -300,17 +312,31 @@ bool Config::SetAutoStart(bool v) {
     const bool changed = (autoStart_ != v);
     autoStart_ = v;
 
-    // 并行执行三种方案，不互相阻挡
-    // 只要其中一个成功就算成功
+    // 注册表和快捷方式不启动外部进程，可在当前线程快速完成。
     bool regOk = SetAutoStartRegistry(v);
-    bool taskOk = SetAutoStartTaskScheduler(v);
     bool startupOk = SetAutoStartStartupFolder(v);
 
-    const bool anyOk = regOk || taskOk || startupOk;
+    // schtasks 可能被安全软件阻塞十余秒，放到独立线程执行，避免卡住设置窗口。
+    bool taskQueued = false;
+    const uint64_t generation = ++AutoStartTaskGeneration();
+    try {
+        std::thread([v, generation]() {
+            std::lock_guard<std::mutex> lock(AutoStartTaskMutex());
+            if (generation != AutoStartTaskGeneration().load()) return;
+            const bool ok = Config::SetAutoStartTaskScheduler(v);
+            echo::Log("[AUTOSTART] Async TaskScheduler apply=%s value=%d\n",
+                      ok ? "ok" : "FAIL", v ? 1 : 0);
+        }).detach();
+        taskQueued = true;
+    } catch (const std::exception& e) {
+        echo::Log("[AUTOSTART] Failed to queue TaskScheduler update: %s\n", e.what());
+    }
+
+    const bool anyOk = regOk || taskQueued || startupOk;
     echo::Log("[AUTOSTART] SetAutoStart(%s) changed=%d, reg=%s task=%s startup=%s -> overall=%s\n",
         v ? "true" : "false", (int)changed,
         regOk ? "ok" : "FAIL",
-        taskOk ? "ok" : "FAIL",
+        taskQueued ? "queued" : "FAIL",
         startupOk ? "ok" : "FAIL",
         anyOk ? "OK" : "ALL-FAIL");
     return anyOk;
@@ -590,6 +616,7 @@ std::string Config::GetAuthToken() {
         ::RegCloseKey(hKey);
         if (lr == ERROR_SUCCESS && size > 2) {
             s_cachedToken = WideToUtf8(buffer);
+            s_fallbackToken = s_cachedToken == "EchoTL-FALLBACK-UNSAFE";
             Log("[AUTH] Token loaded from registry\n");
             return s_cachedToken;
         }
@@ -636,8 +663,9 @@ std::string Config::GetAuthToken() {
     }
 
     // 5. 写入注册表供后续使用
-    lr = ::RegCreateKeyExW(HKEY_CURRENT_USER, kRegPath, 0, nullptr,
-                           REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    lr = s_fallbackToken ? ERROR_ACCESS_DENIED :
+        ::RegCreateKeyExW(HKEY_CURRENT_USER, kRegPath, 0, nullptr,
+                          REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
     if (lr == ERROR_SUCCESS) {
         // Token 内容始终为 ASCII（UUID/十六进制），逐字节拓宽安全；
         // 若未来 Token 包含非 ASCII 字符，需改用 MultiByteToWideChar(CP_UTF8)。

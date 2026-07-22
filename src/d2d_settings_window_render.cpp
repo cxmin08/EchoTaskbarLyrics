@@ -256,10 +256,12 @@ void D2DSettingsWindow::DrawLabelRow(ID2D1RenderTarget* rt, const Control& c) {
         // 计算光标 X 位置
         float caretX = inputLeft + 8.f;
         if (c.caretPos > 0 && !wideVal.empty()) {
+            const std::wstring widePrefix = settings_window_detail::Utf8ToWide(
+                c.textValue.substr(0, static_cast<size_t>(c.caretPos)));
             DWRITE_TEXT_METRICS metrics{};
             ComPtr<IDWriteTextLayout> layout;
             dwriteFactory_->CreateTextLayout(
-                wideVal.c_str(), static_cast<UINT>(c.caretPos),
+                widePrefix.c_str(), static_cast<UINT>(widePrefix.size()),
                 valueFmt_.Get(), 200.f, 30.f, &layout);
             if (layout) layout->GetMetrics(&metrics);
             caretX += metrics.widthIncludingTrailingWhitespace;

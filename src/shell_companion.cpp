@@ -339,7 +339,7 @@ void ShellCompanion::CheckResize(HWND lyricsWnd) {
         constexpr int kAutoHideThreshold = 10;
         const bool tbIsVisible = (tbH >= kAutoHideThreshold);
         if (tbIsVisible != taskbarVisible_) {
-            // 通知外部进行重定位（通过回调或直接触发）
+            taskbarVisible_ = tbIsVisible;
             if (onReposition_) onReposition_();
         }
     }
@@ -409,7 +409,7 @@ void ShellCompanion::PositionLyricsInTaskbar(
 
     const bool uiaExpired = geometry_.IsUiaCacheExpired(200);
     if (uiaExpired) {
-        geometry_.GetChildRectsByUIA(taskListRect, foundTaskList,
+        geometry_.GetChildRectsByUIA(hTaskbar_, taskListRect, foundTaskList,
                                      trayRect, foundTray,
                                      rebarRect, foundRebar, tbWidth);
         geometry_.CacheUiaResults(taskListRect, foundTaskList,
@@ -433,7 +433,8 @@ void ShellCompanion::PositionLyricsInTaskbar(
             // 二次 UIA 查询
             bool fTL2, fTR2, fRB2;
             RECT tl2, tr2, rb2;
-            geometry_.GetChildRectsByUIA(tl2, fTL2, tr2, fTR2, rb2, fRB2, tbWidth);
+            geometry_.GetChildRectsByUIA(
+                hTaskbar_, tl2, fTL2, tr2, fTR2, rb2, fRB2, tbWidth);
             if (fTL2) { taskListCheck = tl2; taskListCheckValid = true; }
             else if (foundTaskList) {
                 // UIA 失败降级：用 EnumChildWindows 做二次采样

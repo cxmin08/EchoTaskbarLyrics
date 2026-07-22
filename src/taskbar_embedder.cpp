@@ -51,7 +51,8 @@ void TaskbarEmbedder::Destroy() {
 void TaskbarEmbedder::Position(int x, int y, int w, int h, bool forceTopmost) {
     if (!hwnd_) return;
     HWND after = forceTopmost ? HWND_TOPMOST : nullptr;
-    UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
+    UINT flags = SWP_NOACTIVATE;
+    if (!forceTopmost) flags |= SWP_NOZORDER;
     // 全屏恢复路径：窗口此前被 SWP_HIDEWINDOW 隐藏，此处需显式 SWP_SHOWWINDOW
     if (forceTopmost && !::IsWindowVisible(hwnd_)) flags |= SWP_SHOWWINDOW;
     ::SetWindowPos(hwnd_, after, x, y, w, h, flags);

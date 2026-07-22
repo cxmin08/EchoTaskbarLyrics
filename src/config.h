@@ -85,7 +85,7 @@ public:
     void SetEnabled(bool v)   { enabled_ = v; }
     // 仅更新配置状态，不触碰系统自启项；用于设置窗口先收集配置，保存成功后再统一应用。
     void SetAutoStartState(bool v) { autoStart_ = v; }
-    // 设置并立即写注册表；返回注册表操作是否成功
+    // 设置自启项；计划任务方案异步执行，避免阻塞 UI。
     bool SetAutoStart(bool v);
 
     // ---- 配置子结构 ----
@@ -100,7 +100,7 @@ public:
     static std::string GetConfigPath();
 
     // ---- 鉴权 Token ----
-    // EchoMusic 插件模式可在启动时注入临时 token，避免依赖 EchoMusic 扩展存储。
+    // 旧嵌入调用方可通过 API 注入临时 token；插件进程使用环境变量传递。
     static void SetAuthTokenOverride(std::string token);
 
     // 从注册表 HKCU\Software\EchoMusic\TaskbarLyrics\authToken 读取。
@@ -115,7 +115,7 @@ private:
     bool SetAutoStartRegistry(bool enable);
     static std::string GetAutoStartRegistryKey();
     // 任务计划程序方案（自启的备选/主推方式，避开杀毒软件对 Run 键的拦截）
-    bool SetAutoStartTaskScheduler(bool enable);
+    static bool SetAutoStartTaskScheduler(bool enable);
     // 启动文件夹快捷方式方案
     bool SetAutoStartStartupFolder(bool enable);
 

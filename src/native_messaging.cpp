@@ -55,9 +55,9 @@ bool NativeMessagingHost::Run() {
             if (handler_) {
                 handler_(msg);
             }
-        } catch (const nlohmann::json::parse_error& e) {
-            Log("[NATIVE-HOST] JSON parse error: %s\n", e.what());
-            // 单行解析失败不终止循环，跳过继续
+        } catch (const nlohmann::json::exception& e) {
+            Log("[NATIVE-HOST] JSON message error: %s\n", e.what());
+            // 单行格式或类型错误不终止循环，跳过继续
             continue;
         }
     }
