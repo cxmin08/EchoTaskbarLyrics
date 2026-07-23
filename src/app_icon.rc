@@ -5,8 +5,8 @@
 IDI_ICON1 ICON "..\\resources\\icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,6,6,0
- PRODUCTVERSION 1,6,6,0
+ FILEVERSION 1,6,7,0
+ PRODUCTVERSION 1,6,7,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG
@@ -23,11 +23,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "EchoMusic\0"
             VALUE "FileDescription", "Echo Taskbar Lyrics\0"
-            VALUE "FileVersion", "1.6.6\0"
+            VALUE "FileVersion", "1.6.7\0"
             VALUE "InternalName", "EchoTaskbarLyrics.exe\0"
             VALUE "OriginalFilename", "EchoTaskbarLyrics.exe\0"
             VALUE "ProductName", "Echo Taskbar Lyrics\0"
-            VALUE "ProductVersion", "1.6.6\0"
+            VALUE "ProductVersion", "1.6.7\0"
         END
     END
     BLOCK "VarFileInfo"

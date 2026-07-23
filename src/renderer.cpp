@@ -510,9 +510,9 @@ void TaskbarRenderer::Render(const RenderState& state) {
         renderTarget_->Clear(D2D1::ColorF(0, 0, 0, 0.15f));
     } else if (state.isHovering) {
         renderTarget_->Clear(D2D1::ColorF(0, 0, 0, 0.004f));
-    } else if (state.isPlaying && (!state.hasLyrics || state.currentLine.empty())) {
-        // P0-2: 播放中但无可见内容（无歌词/频谱宽限期）时也铺不可见底层，
-        // 否则全透明像素鼠标穿透，悬停永远无法触发，控制按钮无法调出
+    } else if (!state.hasLyrics || state.currentLine.empty()) {
+        // 无可见歌词时始终铺不可见底层，包括纯音乐暂停后频谱停止绘制的状态。
+        // 否则全透明像素会让鼠标穿透，悬停无法再次触发，播放按钮也无法调出。
         renderTarget_->Clear(D2D1::ColorF(0, 0, 0, 0.004f));
     } else {
         renderTarget_->Clear(D2D1::ColorF(0, 0, 0, 0.0f));
