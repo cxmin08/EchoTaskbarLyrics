@@ -60,6 +60,7 @@ struct AppContext {
 };
 
 constexpr UINT WM_AUTOSTART_APPLIED = WM_APP + 20;
+constexpr UINT_PTR EXPLORER_RECOVERY_TIMER_ID = 2;
 
 std::function<void(bool)> MakeAutoStartCompletion(HWND hwnd, bool enabled) {
     return [hwnd, enabled](bool success) {
@@ -121,6 +122,29 @@ void ApplyRendererSettings(AppContext& app) {
         app.config->Appearance().fontFamily.c_str(), app.config->Appearance().fontSize,
         app.config->Appearance().normalOpacity);
     app.renderer->ApplySettings(app.config->Appearance());
+}
+
+bool RecoverAfterExplorerRestart(AppContext& app) {
+    if (!app.taskbarWindow) return false;
+
+    Log("[SHELL] Recovering taskbar window after Explorer restart\n");
+    if (!app.taskbarWindow->RecoverAfterExplorerRestart()) {
+        Log("[SHELL] Taskbar recovery deferred: Shell_TrayWnd is not ready\n");
+        return false;
+    }
+
+    if (app.renderer) {
+        app.renderer->Shutdown();
+        if (!app.renderer->Initialize(app.taskbarWindow->GetHandle())) {
+            Log("[SHELL] Taskbar recovery failed: renderer initialization failed\n");
+            return false;
+        }
+        ApplyRendererSettings(app);
+        app.renderer->SetVerticalTaskbar(app.taskbarWindow->IsVerticalTaskbar());
+    }
+
+    Log("[SHELL] Taskbar window recovered after Explorer restart\n");
+    return true;
 }
 
 int CalculateFrameIntervalMs(const echo::AdvancedConfig& advanced) {
@@ -352,7 +376,16 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     AppContext* app = reinterpret_cast<AppContext*>(
         ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (!app) return ::DefWindowProcW(hwnd, msg, wParam, lParam);
-    if (app->tray && app->tray->HandleSystemMessage(msg)) return 0;
+    if (app->tray && app->tray->HandleSystemMessage(msg)) {
+        // TaskbarCreated 在 Explorer 重启并重建任务栏后广播。托盘图标恢复之外，
+        // 歌词 owned window 也必须改绑新的 Shell_TrayWnd。
+        if (RecoverAfterExplorerRestart(*app)) {
+            ::KillTimer(hwnd, EXPLORER_RECOVERY_TIMER_ID);
+        } else {
+            ::SetTimer(hwnd, EXPLORER_RECOVERY_TIMER_ID, 500, nullptr);
+        }
+        return 0;
+    }
 
     switch (msg) {
     case WM_AUTOSTART_APPLIED: {
@@ -392,6 +425,13 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case echo::TaskbarWindow::WM_FRAME_TICK:
     case WM_TIMER: {
         try {
+            if (msg == WM_TIMER && wParam == EXPLORER_RECOVERY_TIMER_ID) {
+                if (RecoverAfterExplorerRestart(*app)) {
+                    ::KillTimer(hwnd, EXPLORER_RECOVERY_TIMER_ID);
+                }
+                return 0;
+            }
+
             // ═══════ 帧渲染流程 ═══════
             // 1. 检测任务栏尺寸变化（含 APPBAR 自动隐藏鼠标进出检测）
             if (app->taskbarWindow) app->taskbarWindow->CheckResize();

@@ -101,6 +101,43 @@ void TaskbarWindow::Destroy() {
     created_ = false;
 }
 
+bool TaskbarWindow::RecoverAfterExplorerRestart() {
+    const HWND newTaskbar = ShellCompanion::FindTaskbarHandle();
+    if (!newTaskbar) return false;
+
+    const bool wasFullscreenHidden = companion_.IsFullscreenHidden();
+    const bool needsRecreate = !hwnd_ || !::IsWindow(hwnd_);
+
+    companion_.Shutdown();
+
+    if (needsRecreate) {
+        hwnd_ = nullptr;
+        created_ = false;
+        if (!Create(hInstance_, newTaskbar)) return false;
+    } else {
+        // Explorer 重启会创建全新的 Shell_TrayWnd，旧 owner 句柄不再有效。
+        ::SetWindowLongPtrW(
+            hwnd_, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(newTaskbar));
+        if (!companion_.Initialize(newTaskbar, hwnd_)) return false;
+
+        lastPosition_ = companion_.GetTaskbarInfo().position;
+        lastPosRect_ = {-1, -1, -1, -1};
+        InternalPosition();
+    }
+
+    isHovering_ = false;
+    trackingMouse_ = false;
+    isDragging_ = false;
+
+    // 全屏隐藏属于用户配置驱动的有效状态，不能因 Explorer 重启而强制显示。
+    if (!wasFullscreenHidden && hwnd_ && ::IsWindow(hwnd_)) {
+        ::ShowWindow(hwnd_, SW_SHOWNA);
+        ::SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+    return hwnd_ && ::IsWindow(hwnd_);
+}
+
 // ═════════════════════════════════════════
 // 定位
 // ═════════════════════════════════════════

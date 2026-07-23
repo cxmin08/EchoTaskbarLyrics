@@ -210,6 +210,10 @@ void ShellCompanion::RemoveHooks() {
         ::UnhookWinEvent(s_foregroundHook_);
         s_foregroundHook_ = nullptr;
     }
+    s_shellInteractionLocked_ = false;
+    s_shellInteractionLockedTime_ = {};
+    s_frozenTaskbarRect_ = {};
+    s_lastGoodTaskbarRect_ = {};
     s_lockedByStartMenuFg_ = false;
     s_shellMenuEventActive_ = false;
     s_lyricsWnd_ = nullptr;
@@ -233,6 +237,12 @@ bool ShellCompanion::Initialize(HWND hTaskbar, HWND lyricsWnd) {
     if (!hTaskbar) return false;
 
     hTaskbar_ = hTaskbar;
+    lastTaskbarRect_ = {};
+    stableTaskbarRect_ = {};
+    stableTaskListRect_ = {};
+    stableTaskListValid_ = false;
+    cachedRightEdgeOffset_ = 0;
+    taskbarVisible_ = true;
 
     // 初始化 UIA
     geometry_.InitUIA();
@@ -300,7 +310,7 @@ void ShellCompanion::SetFullscreenHidden(bool hidden, HWND lyricsWnd) {
 // ═════════════════════════════════════════
 
 void ShellCompanion::CheckResize(HWND lyricsWnd) {
-    if (!hTaskbar_) return;
+    if (!hTaskbar_ || !::IsWindow(hTaskbar_)) return;
 
     // 全屏隐藏期间跳过重检测：避免 WM_DELAYED_REPOSITION → PositionLyricsInTaskbar
     // 中 SetWindowPos(SWP_SHOWWINDOW) 重新显示已隐藏的窗口
@@ -360,7 +370,7 @@ void ShellCompanion::PositionLyricsInTaskbar(
     int lyricWindowWidthBaseDp,
     int dragOffsetX, int dragOffsetY,
     RECT& inOutLastPosRect) {
-    if (!lyricsWnd || !hTaskbar_) return;
+    if (!lyricsWnd || !hTaskbar_ || !::IsWindow(hTaskbar_)) return;
 
     // 全屏隐藏期间跳过定位
     if (embedder_.IsFullscreenHidden()) return;
@@ -835,7 +845,7 @@ void ShellCompanion::RequestReposition(HWND lyricsWnd) {
 
 RECT ShellCompanion::GetTaskbarRect() const {
     RECT rect{0, 0, 0, 0};
-    if (hTaskbar_) {
+    if (hTaskbar_ && ::IsWindow(hTaskbar_)) {
         ::GetWindowRect(hTaskbar_, &rect);
     }
     return rect;

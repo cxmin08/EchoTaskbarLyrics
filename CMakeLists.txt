@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(EchoTaskbarLyrics
-    VERSION 1.6.7
+    VERSION 1.6.8
     DESCRIPTION "EchoMusic Windows Taskbar Lyrics Plugin"
     LANGUAGES CXX RC)
 

@@ -49,6 +49,10 @@ public:
 
     void Destroy();
 
+    // Explorer 重启后重新绑定新建的 Shell_TrayWnd；若 owned window 已随旧任务栏
+    // 失效，则原位重建歌词窗口。成功后调用方应重建依赖 HWND 的渲染资源。
+    bool RecoverAfterExplorerRestart();
+
     // 句柄访问（委托 embedder_）
     HWND GetHandle() const { return hwnd_; }
 
